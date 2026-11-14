@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import decky
+from nsl_games import external_games
 
 from xefg import GeneratorMixin, XEFG_LOG, XEFG_BUILD
 from lsfg import LsfgMixin
@@ -701,6 +702,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
                     "name": name,
                     "install_path": str(steamapps / "common" / info["installdir"]),
                 }
+        for game in external_games(self._steam_library_paths(), appid):
+            games.setdefault(game["appid"], game)
         return sorted(games.values(), key=lambda g: g["name"].lower())
 
     def _game(self, appid: str) -> dict | None:
@@ -977,7 +980,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
             tool = mapping.get("0") or ""
             source = "default"
         prefix = None
-        version_file = Path(game["install_path"]).parent.parent / "compatdata" / appid / "version"
+        version_file = (Path(game["prefix_path"]) / "version" if game.get("prefix_path") else
+                        Path(game["install_path"]).parent.parent / "compatdata" / appid / "version")
         try:
             prefix = version_file.read_text(encoding="utf-8").strip() or None
         except OSError:

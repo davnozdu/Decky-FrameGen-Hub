@@ -24,6 +24,7 @@ def check_zip(data, depth=0):
 plugin = OUT / 'Decky.FrameGen.Hub.zip'
 files = [ROOT / n for n in ('main.py', 'plugin.json', 'package.json', 'LICENSE', 'README.md', 'README.ru.md', 'FSR4-EXTRACTION.md', 'dist/index.js')]
 files += sorted((ROOT / 'py_modules').glob('*.py'))
+files += [p for p in (ROOT / 'py_modules' / 'nsl_vdf').rglob('*') if p.is_file() and '__pycache__' not in p.parts]
 files += [p for p in (ROOT / 'licenses').rglob('*') if p.is_file()]
 files += [ROOT / 'bin' / f'anr-fg-{version}-{kind}.zip' for kind in ('full', 'addon')]
 with zipfile.ZipFile(plugin, 'w', zipfile.ZIP_DEFLATED) as z:
