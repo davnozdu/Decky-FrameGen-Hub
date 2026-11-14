@@ -61,6 +61,7 @@ import {
   updateFromGithub,
   UpdateInfo,
 } from "./api";
+import { registerFocusRoot, withSettingFocus, openMenuWithFocus } from "./focus";
 import { t, translateMessage, initializeLanguage, subscribeLanguage, getLanguage } from "./i18n";
 import { copyText, getLaunchOptions, setLaunchOptions } from "./steam";
 
@@ -117,7 +118,7 @@ function PackageSection({ info, reload }: { info: AnrInfo | null; reload: () => 
   }, []);
   useEffect(() => void loadLsfg(), [loadLsfg]);
 
-  const run = async (label: string, fn: () => Promise<{ status: string; message?: string }>) => {
+  const run = withSettingFocus(async (label: string, fn: () => Promise<{ status: string; message?: string }>) => {
     setBusy(label);
     try {
       const r = await fn();
@@ -129,7 +130,7 @@ function PackageSection({ info, reload }: { info: AnrInfo | null; reload: () => 
       await reload();
       await loadUpdates(false);
     }
-  };
+  });
 
   const updatePlugin = async () => {
     if (!updates?.plugin_url) return;
@@ -287,6 +288,7 @@ function PackageSection({ info, reload }: { info: AnrInfo | null; reload: () => 
       {info?.versions && info.versions.length > 1 && (
         <PanelSectionRow>
           <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
             label={t("Version for new patches")}
             selectedOption={info.version}
             rgOptions={[...info.versions].reverse().map((v) => ({ data: v, label: v }))}
@@ -375,6 +377,10 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   const [upscaler, setUpscalerInfo] = useState<UpscalerInfo | null>(null);
   const [opti, setOpti] = useState<Record<string, string>>({});
   const [copyFrom, setCopyFrom] = useState<string>("");
+  const generatorQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const generatorPending = useRef(0);
+  const [generatorSaving, setGeneratorSaving] = useState(false);
+  const lsfgDraft = useRef<Partial<LsfgProfile> | null>(null);
 
   const loadGames = useCallback(async () => {
     setLoadingGames(true);
@@ -396,34 +402,32 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     }
   }, []);
 
-  // silent: refresh after a settings change without disabling buttons, so the gamepad focus stays where it is.
+  const selectedApp = useRef(appid);
+  selectedApp.current = appid;
+  const statusRequest = useRef(0);
+  // Fetch independent views together and commit once. Silent refreshes keep the current controls mounted.
   const loadStatus = useCallback(async (id: string, silent = false) => {
+    const request = ++statusRequest.current;
     if (!id) return setStatus(null);
     if (!silent) setLoadingStatus(true);
-    try {
-      setStatus(await getGameStatus(id));
-      setLaunchOptionsState(await getLaunchOptions(Number(id)));
-      try {
-        setUpscalerInfo(await getUpscaler(id));
-      } catch {
-        setUpscalerInfo(null);
-      }
-      try {
-        const o = await getOptiSettings(id);
-        setOpti(o.status === "success" ? o.settings : {});
-      } catch {
-        setOpti({});
-      }
-    } catch (e) {
-      setStatus({ status: "error", message: errorText(e) });
-    } finally {
-      if (!silent) setLoadingStatus(false);
-    }
+    const views = await Promise.allSettled([
+      getGameStatus(id), getUpscaler(id), getOptiSettings(id),
+      silent ? Promise.resolve(undefined) : getLaunchOptions(Number(id)),
+    ]);
+    if (request !== statusRequest.current || selectedApp.current !== id) return;
+    const [gameView, upscaleView, optiView, launchView] = views;
+    if (gameView.status === "fulfilled" && gameView.value.status === "success") setStatus(gameView.value);
+    else if (!silent) setStatus({ status: "error", message: gameView.status === "rejected" ? errorText(gameView.reason) : gameView.value.message });
+    if (upscaleView.status === "fulfilled" && upscaleView.value.status === "success") setUpscalerInfo(upscaleView.value);
+    if (optiView.status === "fulfilled" && optiView.value.status === "success") setOpti(optiView.value.settings);
+    if (launchView.status === "fulfilled" && launchView.value !== undefined) setLaunchOptionsState(launchView.value);
+    setLoadingStatus(false);
   }, []);
 
   useEffect(() => void loadGames(), [loadGames]);
   useEffect(() => {
     setDirChoice(AUTO_DIR);
+    lsfgDraft.current = null;
     setLog("");
     setPerf(null);
     void loadStatus(appid);
@@ -471,23 +475,36 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     }
   };
 
-  const changeGenerator = async (choice: string, lsfg?: Partial<LsfgProfile>) => {
-    setBusy("generator");
+  const changeGenerator = withSettingFocus(async (choice: string, lsfg?: Partial<LsfgProfile>) => {
+    const requestApp = appid;
     setLog("");
     setPerf(null);
-    const cur = { ...(status?.lsfg || { multiplier: 2, flow_scale: 1.0, performance_mode: false }), ...(lsfg || {}) };
+    const cur = { ...(lsfgDraft.current || status?.lsfg || { multiplier: 2, flow_scale: 1.0, performance_mode: false }), ...(lsfg || {}) };
+    if (choice === "lsfg") {
+      lsfgDraft.current = cur;
+      if (status?.lsfg) setStatus((previous) => previous ? { ...previous, lsfg: { ...previous.lsfg, ...cur } as LsfgProfile } : previous);
+    }
+    generatorPending.current++;
+    setGeneratorSaving(true);
+    const saved = generatorQueue.current.catch(() => {}).then(() =>
+      setGeneratorMode(requestApp, choice, cur.multiplier ?? 2, cur.flow_scale ?? 1.0, Boolean(cur.performance_mode)));
+    generatorQueue.current = saved;
     try {
-      const r = await setGeneratorMode(appid, choice, cur.multiplier ?? 2, cur.flow_scale ?? 1.0, Boolean(cur.performance_mode));
+      const r = await saved;
       toast(r.message || r.status);
     } catch (e) {
       toast(errorText(e));
     } finally {
-      setBusy(null);
-      await loadStatus(appid, true);
+      generatorPending.current--;
+      if (!generatorPending.current && selectedApp.current === requestApp) {
+        await loadStatus(requestApp, true);
+        lsfgDraft.current = null;
+      }
+      if (!generatorPending.current) setGeneratorSaving(false);
     }
-  };
+  });
 
-  const changeSetting = async (key: string, value: string) => {
+  const changeSetting = withSettingFocus(async (key: string, value: string) => {
     try {
       const r = await setGameSetting(appid, key, value);
       toast(r.message || r.status);
@@ -495,9 +512,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       toast(errorText(e));
     }
     await loadStatus(appid, true);
-  };
+  });
 
-  const changeUpscaler = async (choice: string, watermark: boolean) => {
+  const changeUpscaler = withSettingFocus(async (choice: string, watermark: boolean) => {
     try {
       const r = await setUpscaler(appid, choice, watermark);
       toast(r.message || r.status);
@@ -505,9 +522,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       toast(errorText(e));
     }
     await loadStatus(appid, true);
-  };
+  });
 
-  const changeOpti = async (key: string, value: string) => {
+  const changeOpti = withSettingFocus(async (key: string, value: string) => {
     const before = opti[key];
     setOpti((cur) => ({ ...cur, [key]: value }));
     let ok = false;
@@ -525,9 +542,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       toast(errorText(e));
     }
     if (!ok) setOpti((cur) => ({ ...cur, [key]: before ?? "auto" }));
-  };
+  });
 
-  const profileAction = async (fn: () => Promise<{ status: string; message?: string }>) => {
+  const profileAction = withSettingFocus(async (fn: () => Promise<{ status: string; message?: string }>) => {
     try {
       const r = await fn();
       toast(r.message || r.status);
@@ -535,9 +552,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       toast(errorText(e));
     }
     await loadStatus(appid, true);
-  };
+  });
 
-  const changeRenderQuality = async (choice: string) => {
+  const changeRenderQuality = withSettingFocus(async (choice: string) => {
     try {
       const r = await setRenderQuality(appid, choice);
       toast(r.message || r.status);
@@ -545,7 +562,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       toast(errorText(e));
     }
     await loadStatus(appid, true);
-  };
+  });
 
   const renderSize = (ratio: number | null | undefined) => {
     const out = upscaler?.output || [1920, 1080];
@@ -633,6 +650,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     <PanelSection title={t("Game")}>
       <PanelSectionRow>
         <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
           layout="below"
           label={t("Steam game")}
           strDefaultLabel={loadingGames ? t("Loading…") : t("Choose a game")}
@@ -662,7 +680,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 : patched || status?.lsfg || status?.managed
                 ? t("Removes this plugin's patches, disables its Lossless Scaling profile and restores backed-up files. Other mods and shared imported libraries are kept.")
                 : t("This game has no changes managed by this plugin.")}
-              disabled={busy !== null || loadingStatus || status?.running || !(patched || status?.lsfg || status?.managed)}
+              disabled={busy !== null || generatorSaving || loadingStatus || status?.running || !(patched || status?.lsfg || status?.managed)}
               onClick={doUnpatch}>
               {busy === "unpatch" ? t("Restoring game…") : t("Restore game (remove plugin patches)")}
             </ButtonItem>
@@ -699,12 +717,12 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   label={t("Lossless Scaling frame generation")}
                   description={t("lsfg-vk works in any game, also without DLSS Frame Generation. Needs your Lossless Scaling (Steam, branch lsfg-vk).")}
                   checked={Boolean(status?.lsfg)}
-                  disabled={busy !== null || Boolean(status?.running)}
+                  disabled={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
                   onChange={(on: boolean) => void changeGenerator(on ? "lsfg" : "off")}
                 />
               </PanelSectionRow>
               {status?.lsfg && (
-                <LsfgControls profile={status.lsfg} busy={busy !== null || Boolean(status?.running)}
+                <LsfgControls profile={status.lsfg} busy={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
                   onChange={(p) => void changeGenerator("lsfg", p)} />
               )}
             </>
@@ -719,6 +737,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           {!patched && status?.candidates && status.candidates.length > 1 && (
             <PanelSectionRow>
               <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
                 layout="below"
                 label={t("Game .exe")}
                 selectedOption={dirChoice}
@@ -734,7 +753,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              disabled={!info?.installed || busy !== null || loadingStatus || status?.running}
+              disabled={!info?.installed || busy !== null || generatorSaving || loadingStatus || status?.running}
               onClick={doPatch}
             >
               {busy === "patch"
@@ -799,6 +818,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             <>
               <PanelSectionRow>
                 <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
                   label={t("Frame generator")}
                   description={busy === "generator"
                     ? t("Preparing generator… First XeFG setup downloads about 75 MB.")
@@ -824,13 +844,14 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 </PanelSectionRow>
               )}
               {genChoice === "lsfg" && (
-                <LsfgControls profile={status?.lsfg || null} busy={busy !== null || Boolean(status?.running)}
+                <LsfgControls profile={status?.lsfg || null} busy={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
                   onChange={(p) => void changeGenerator("lsfg", p)} />
               )}
               {upscaler?.options && (
                 <>
                   <PanelSectionRow>
                     <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
                       label={t("Upscaler")}
                       description={
                         upscaler.choice === "fsr4lite"
@@ -858,6 +879,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   {upscaler.render_options && (
                     <PanelSectionRow>
                       <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
                         label={t("Render quality")}
                         description={(() => {
                           const cur = upscaler.render_options.find((o) => o.value === (upscaler.render_quality || "game"));
@@ -915,6 +937,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               </PanelSectionRow>
               <PanelSectionRow>
                 <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
                   label={t("Frame generation multiplier")}
                   description={t("Overrides what the game asks for (many games only offer 2X on non-RTX 50 GPUs).")}
                   selectedOption={opti.fg_multiplier || "auto"}
@@ -1004,6 +1027,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 <>
                   <PanelSectionRow>
                     <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
                       label={t("Copy the profile from")}
                       strDefaultLabel={t("Choose a game")}
                       selectedOption={copyFrom}
@@ -1041,6 +1065,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               </PanelSectionRow>
               <PanelSectionRow>
                 <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
                   label={t("Compute path")}
                   selectedOption={settings.path || "auto"}
                   rgOptions={PATH_OPTIONS.map((p) => ({ data: p, label: p === "auto" ? t("Automatic") : p }))}
@@ -1408,6 +1433,8 @@ function Fsr4Libraries({ onImported }: { onImported: () => void }) {
 }
 
 function Content() {
+  const focusRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => registerFocusRoot(focusRoot.current), []);
   const [fsrRevision, setFsrRevision] = useState(0);
   const [info, setInfo] = useState<AnrInfo | null>(null);
   const reload = useCallback(async () => {
@@ -1420,14 +1447,14 @@ function Content() {
   useEffect(() => void reload(), [reload]);
 
   return (
-    <>
+    <div ref={focusRoot} style={{ display: "contents" }}>
       <LegacyBanner />
       <PackageSection info={info} reload={reload} />
       <Fsr4Libraries onImported={() => setFsrRevision((v) => v + 1)} />
       <GameSection key={fsrRevision} info={info} />
       <BenchmarkSection />
       <HelpSection />
-    </>
+    </div>
   );
 }
 
