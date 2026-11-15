@@ -48,6 +48,7 @@ export const getAnrInfo = callable<[], AnrInfo>("get_anr_info");
 export const installBundled = callable<[], Result & { version?: string }>("install_bundled");
 export const updateFromGithub = callable<[], Result & { version?: string }>("update_from_github");
 export const setActiveVersion = callable<[version: string], Result>("set_active_version");
+export const syncShortcuts = callable<[shortcuts: import("./steam").LiveShortcut[]], Result>("sync_shortcuts");
 export const listGames = callable<[], Result & { games: GameEntry[] }>("list_games");
 export const getGameStatus = callable<[appid: string], GameStatus>("get_game_status");
 export const patchGame = callable<

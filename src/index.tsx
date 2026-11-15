@@ -40,6 +40,7 @@ import {
   PerfSession,
   installBundled,
   listGames,
+  syncShortcuts,
   listOutdatedGames,
   patchGame,
   readGameLog,
@@ -63,7 +64,7 @@ import {
 } from "./api";
 import { registerFocusRoot, withSettingFocus, openMenuWithFocus } from "./focus";
 import { t, translateMessage, initializeLanguage, subscribeLanguage, getLanguage } from "./i18n";
-import { copyText, getLaunchOptions, setLaunchOptions } from "./steam";
+import { copyText, getLaunchOptions, setLaunchOptions, getNonSteamShortcuts } from "./steam";
 
 declare const SteamClient: any;
 
@@ -385,6 +386,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   const loadGames = useCallback(async () => {
     setLoadingGames(true);
     try {
+      await syncShortcuts(await getNonSteamShortcuts());
       const r = await listGames();
       const list = (r.games || []).filter((g) => g.installed);
       setGames(list);

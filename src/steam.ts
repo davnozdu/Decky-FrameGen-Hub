@@ -24,7 +24,7 @@ export const getLaunchOptions = (appId: number): Promise<string> =>
         window.clearTimeout(timeout);
         // Unregistering inside the callback can race the registration's return value.
         window.setTimeout(() => unregister(), 0);
-        resolve(details?.strLaunchOptions ?? "");
+        resolve(details?.strLaunchOptions ?? (details as any)?.strShortcutLaunchOptions ?? "");
       }
     );
     unregister = () => registration?.unregister?.();
@@ -58,4 +58,31 @@ export const copyText = async (text: string): Promise<boolean> => {
   } catch {
     return false;
   }
+};
+
+// Steam may keep new shortcuts in memory until shutdown; don't require a restart.
+export type LiveShortcut = { appid: number; appname: string; exe: string; StartDir: string; LaunchOptions: string };
+export const getNonSteamShortcuts = async (): Promise<LiveShortcut[]> => {
+  const store = (window as any).appStore;
+  if (!store?.allApps || typeof SteamClient?.Apps?.RegisterForAppDetails !== "function") return [];
+  const apps = store.allApps.filter((app: any) => app.app_type === 1073741824 || app.BIsShortcut?.());
+  const results = await Promise.all(apps.map((app: any) => new Promise<LiveShortcut | null>((resolve) => {
+    let registration: any;
+    let settled = false;
+    const finish = (value: LiveShortcut | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      window.setTimeout(() => registration?.unregister?.(), 0);
+      resolve(value);
+    };
+    const timer = window.setTimeout(() => finish(null), 3000);
+    registration = SteamClient.Apps.RegisterForAppDetails(app.appid, (details: any) => {
+      if (!details?.strShortcutExe) return;
+      finish({ appid: app.appid, appname: app.display_name || "", exe: details.strShortcutExe,
+               StartDir: details.strShortcutStartDir || "",
+               LaunchOptions: details.strLaunchOptions ?? details.strShortcutLaunchOptions ?? "" });
+    });
+  })));
+  return results.filter((value): value is LiveShortcut => value !== null);
 };

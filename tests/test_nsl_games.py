@@ -5,6 +5,7 @@ import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 import nsl_vdf
+from test_battlenet_database import product
 from nsl_games import external_games
 
 class ExternalGames(unittest.TestCase):
@@ -43,6 +44,25 @@ class ExternalGames(unittest.TestCase):
         self.assertEqual(external_games([self.root])[0]["install_path"], str(self.game.resolve()))
         (manifests / "game.item").unlink()
         self.assertEqual(external_games([self.root]), [])
+
+    def test_live_diablo_shortcut_reads_product_db_without_saved_vdf(self):
+        self.shortcut.unlink(missing_ok=True)
+        prefix = self.root / "prefix"
+        db = prefix/"pfx/drive_c/ProgramData/Battle.net/Agent/product.db"
+        db.parent.mkdir(parents=True)
+        game = prefix/"pfx/drive_c/Program Files (x86)/Diablo IV"
+        game.mkdir(parents=True); (game/"Diablo IV.exe").touch()
+        db.write_bytes(product())
+        launcher = prefix/"pfx/drive_c/Program Files (x86)/Battle.net/Battle.net Launcher.exe"
+        launcher.parent.mkdir(parents=True); launcher.touch()
+        options = f'WINEDLLOVERRIDES="dxgi=n,b" STEAM_COMPAT_DATA_PATH="{prefix}" %command% --exec="launch Fen"'
+        live = [{"appid": 12345, "appname": "Diablo IV", "exe": f'"{launcher}"', "LaunchOptions": options}]
+        games = external_games([self.root], live_shortcuts=live)
+        self.assertEqual(len(games), 1)
+        self.assertEqual(games[0]["appid"], "12345")
+        self.assertEqual(games[0]["install_path"], str(game.resolve()))
+        self.assertEqual(live[0]["LaunchOptions"], options)
+        self.assertFalse(self.shortcut.exists())
 
     def test_missing_executable_is_not_offered(self):
         self.save('"/missing/game.exe"')

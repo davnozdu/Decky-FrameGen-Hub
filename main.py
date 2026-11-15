@@ -702,7 +702,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
                     "name": name,
                     "install_path": str(steamapps / "common" / info["installdir"]),
                 }
-        for game in external_games(self._steam_library_paths(), appid):
+        for game in external_games(self._steam_library_paths(), appid, getattr(self, "_live_shortcuts", [])):
             games.setdefault(game["appid"], game)
         return sorted(games.values(), key=lambda g: g["name"].lower())
 
@@ -991,6 +991,28 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
         return {"tool": tool or None, "source": source, "prefix": prefix, "native": native}
 
     # ── Frontend API: games ───────────────────────────────────────────────────
+
+    async def sync_shortcuts(self, shortcuts: list) -> dict:
+        """Keep live Steam metadata in memory; never rewrite shortcuts.vdf."""
+        if not isinstance(shortcuts, list) or len(shortcuts) > 4096:
+            return {"status": "error", "message": "Invalid shortcut list"}
+        clean = []
+        for entry in shortcuts:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                appid = int(entry.get("appid", 0)) & 0xffffffff
+            except (TypeError, ValueError):
+                continue
+            if not appid:
+                continue
+            item = {"appid": appid}
+            for key in ("appname", "exe", "StartDir", "LaunchOptions"):
+                value = entry.get(key, "")
+                item[key] = value[:65536] if isinstance(value, str) else ""
+            clean.append(item)
+        self._live_shortcuts = clean
+        return {"status": "success"}
 
     async def list_games(self) -> dict:
         try:
