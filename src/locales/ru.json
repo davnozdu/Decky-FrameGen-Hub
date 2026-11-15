@@ -435,5 +435,7 @@
   "The OptiScaler proxy was modified outside this plugin; it was not overwritten.": "Загрузчик OptiScaler изменён вне плагина. Файл не перезаписан.",
   "The OptiScaler proxy or backup changed; no files were overwritten.": "Загрузчик OptiScaler или его резервная копия изменились. Файлы не перезаписаны.",
   "Fix DXGI loading (signed OptiScaler)": "Фикс DXGI: подписанный OptiScaler",
-  "Package defaults": "По умолчанию"
+  "Package defaults": "По умолчанию",
+  "FSR 4 INT8 (official SDK)": "FSR 4 INT8 (официальный SDK)",
+  "Official FSR 4 SDK with signed OptiScaler. DLSS in the game is the input; FSR 4 is the output. INT8 is enabled for this GPU when needed.": "Официальный SDK FSR 4 с подписанным OptiScaler. DLSS в игре передаёт данные, изображение обрабатывает FSR 4. При необходимости для этой видеокарты включается INT8."
 }

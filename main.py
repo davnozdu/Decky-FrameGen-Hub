@@ -1850,6 +1850,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
         ini = self._optiscaler_ini(target, desc)
         if not ini or not ini.exists():
             return {"status": "error", "message": "OptiScaler.ini not found for this game."}
+        if self._load_state()["games"].get(str(appid), {}).get("signed_optiscaler"):
+            return self._apply_signed_upscaler(appid, ini, choice, watermark)
         if choice == "fsr4lite":
             return self._apply_fsr4_lite(appid, ini, watermark)
         state = self._load_state()
@@ -2003,16 +2005,20 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             lite_src = await asyncio.to_thread(self._local_fsr4_source)
             if entry.get("upscaler") == "fsr4lite":
                 src = lite_src
+            signed = bool(entry.get("signed_optiscaler"))
+            if signed:
+                src = {"path": "", "version": "SDK", "own_prefix": False, "source": "official OptiScaler 0.9.4"}
             out = await asyncio.to_thread(self._output_size, str(appid))
-            return {"status": "success", "choice": entry.get("upscaler", "package"),
+            return {"status": "success", "signed_sdk": signed, "choice": entry.get("upscaler", "package"),
                     "render_quality": entry.get("render_quality", "game"),
                     "render_options": [{"value": k, "label": v[0], "ratio": v[1]}
                                        for k, v in self.RENDER_QUALITY.items()],
                     "output": list(out) if out else None,
                     "watermark": bool(entry.get("upscaler_watermark")),
-                    "fsr4_lite_available": bool(lite_src), "fsr4_source": src, "rdna4": self._gpu_is_rdna4(), "gpu_family": self._gpu_family(),
+                    "fsr4_lite_available": bool(lite_src) or signed, "fsr4_source": src, "rdna4": self._gpu_is_rdna4(), "gpu_family": self._gpu_family(),
                     "proton_experimental": self._proton_experimental_installed(),
-                    "options": [{"value": k, "label": v} for k, v in self.UPSCALERS.items()]}
+                    "options": [{"value": k, "label": "FSR 4 INT8 (official SDK)" if signed and k == "fsr4lite" else v}
+                                for k, v in self.UPSCALERS.items()]}
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
 

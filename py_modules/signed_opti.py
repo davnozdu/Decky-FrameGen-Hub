@@ -1,9 +1,11 @@
 """Per-game, reversible use of an official signed OptiScaler core.
 
 The archive is pinned to the publisher's GitHub asset SHA-256. No game binaries,
-upscaler libraries or other games' profiles are replaced.
+user-imported libraries or other games' profiles are replaced. The signed core's
+FSR 4 backend uses SDK libraries extracted from the same pinned archive.
 """
 import asyncio
+import copy
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -32,7 +34,7 @@ def has_certificate(data):
 
 
 class SignedOptiMixin:
-    def _signed_opti_source(self):
+    def _official_opti_asset(self, filename):
         cache = self._runtime_dir() / "official-optiscaler" / VERSION
         cache.mkdir(parents=True, exist_ok=True)
         archive = cache / "official.7z"
@@ -50,15 +52,90 @@ class SignedOptiMixin:
             if not line.startswith("Path = "): continue
             name = line[7:].replace("\\", "/")
             path = PurePosixPath(name)
-            if path.name.lower() == "optiscaler.dll" and not path.is_absolute() and ".." not in path.parts:
+            if path.name.lower() == filename.lower() and not path.is_absolute() and ".." not in path.parts:
                 members.append(name)
-        if len(members) != 1: raise ValueError("Official archive must contain one OptiScaler.dll")
+        if len(members) != 1: raise ValueError(f"Official archive must contain one {filename}")
         result = subprocess.run([tool, "x", "-so", str(archive), members[0]], capture_output=True, timeout=90, env=env)
         if result.returncode or not has_certificate(result.stdout):
-            raise ValueError("Official OptiScaler DLL has no certificate table")
-        dest = cache / "OptiScaler.dll"
+            raise ValueError("Official OptiScaler asset has no certificate table")
+        dest = cache / filename
         dest.write_bytes(result.stdout)
         return dest
+
+    def _signed_opti_source(self):
+        return self._official_opti_asset("OptiScaler.dll")
+
+    def _apply_signed_upscaler(self, appid, ini, choice, watermark):
+        """The signed upstream core uses the SDK backend, not ANR's ffx/model keys.
+
+        Keep SDK files separate from the ANR package and user-imported driver DLLs.
+        Upstream 0.9.4 requires ForceEnableInt8 for RDNA 3/3.5 integrated GPUs.
+        """
+        ini = ini.resolve()
+        state = self._load_state()
+        state_before = copy.deepcopy(state)
+        ini_before = ini.read_bytes()
+        replacements = []
+        entry = state["games"][str(appid)]
+        managed = entry.setdefault("managed_files", [])
+        fsr4 = choice in ("fsr4", "fsr4lite")
+        values = {
+            ("Upscalers", "Dx12Upscaler"): {
+                "package": "auto", "fsr31": "fsr31", "fsr4": "fsr31",
+                "fsr4lite": "fsr31", "xess": "xess",
+            }[choice],
+            ("FSR", "UpscalerIndex"): "0" if fsr4 else "1",
+            ("FSR", "Fsr4Update"): "false",
+            ("FSR", "Fsr4ForceEnableInt8"): "true" if fsr4 and not self._gpu_is_rdna4() else "false",
+            ("FSR", "Fsr4EnableWatermark"): "true" if fsr4 and watermark else "false",
+            ("Log", "LogLevel"): "2", ("Log", "LogToFile"): "true",
+        }
+        if fsr4:
+            folder = ini.parent / "OptiScaler" / "OfficialFSR4"
+            # Resolve before mkdir and do not follow a directory redirected outside the game.
+            if not folder.resolve().is_relative_to(ini.parent.resolve()):
+                raise ValueError("Official SDK directory is outside the game folder")
+            names = ("amd_fidelityfx_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll")
+            for name in names:
+                dest = folder / name
+                record = next((m for m in managed if m.get("path") == str(dest)), None)
+                if dest.is_symlink() or (dest.exists() and (not record or self._file_sha256(dest) != record.get("sha256"))):
+                    raise ValueError(f"{name} is not managed or was modified; it was not overwritten")
+            sources = [self._official_opti_asset(name) for name in names]
+            folder.mkdir(parents=True, exist_ok=True)
+        try:
+            if fsr4:
+                for name, source in zip(names, sources):
+                    dest = folder / name
+                    original = dest.read_bytes() if dest.exists() else None
+                    temp = dest.with_suffix(".fghub-new")
+                    try:
+                        temp.write_bytes(source.read_bytes()); os.replace(temp, dest)
+                    finally:
+                        temp.unlink(missing_ok=True)
+                    replacements.append((dest, original))
+                    managed[:] = [m for m in managed if m.get("path") != str(dest)]
+                    managed.append({"path": str(dest), "sha256": self._file_sha256(dest)})
+                # Wine Z: paths are independent of the launcher's working directory.
+                sdk_path = "Z:" + str(folder).replace("/", "\\")
+                values[("Libraries", "FfxDx12Path")] = sdk_path
+                values[("Libraries", "FfxDx12SRPath")] = sdk_path
+            self._set_ini_sections(ini, values)
+            entry.update(upscaler=choice, upscaler_watermark=bool(watermark))
+            self._save_state(state)
+        except Exception:
+            for dest, original in reversed(replacements):
+                if original is None:
+                    dest.unlink(missing_ok=True)
+                else:
+                    temp = dest.with_suffix(".fghub-new")
+                    temp.write_bytes(original); os.replace(temp, dest)
+            ini.write_bytes(ini_before)
+            self._save_state(state_before)
+            raise
+        return {"status": "success", "message": "Signed OptiScaler: " +
+                ("official FSR 4 SDK selected (INT8 on non-RDNA4 GPUs)." if fsr4 else self.UPSCALERS[choice] + " selected.") +
+                " Restart the game; confirm the active backend in the OptiScaler overlay/log."}
 
     def _set_signed_optiscaler(self, appid, enabled, reapply=False):
         appid = str(appid)
@@ -73,6 +150,9 @@ class SignedOptiMixin:
         proxy = target / entry["proxy"]
         if proxy.is_symlink() or not proxy.is_file(): raise ValueError("OptiScaler proxy file is missing or is a symbolic link")
         current = proxy.read_bytes(); digest = hashlib.sha256(current).hexdigest()
+        state_before = copy.deepcopy(self._load_state())
+        ini = self._optiscaler_ini(target, self._describe_dir(target))
+        ini_before = ini.read_bytes() if ini and ini.exists() else None
         record = entry.get("signed_optiscaler") or {}
         backup = self._runtime_dir() / "optiscaler-compat-backups" / appid / "original.dll"
         if enabled:
@@ -85,7 +165,7 @@ class SignedOptiMixin:
             if record and not reapply: raise ValueError("The OptiScaler proxy changed; disable or reinstall the fix first.")
             source = self._signed_opti_source()
             replacement = source.read_bytes()
-            if not has_certificate(replacement): raise ValueError("Official OptiScaler DLL has no certificate table")
+            if not has_certificate(replacement): raise ValueError("Official OptiScaler asset has no certificate table")
             if self._is_running(game): raise ValueError("Close the game first.")
             backup.parent.mkdir(parents=True, exist_ok=True); backup.write_bytes(current)
             new_record = {"version": VERSION, "installed_sha256": hashlib.sha256(replacement).hexdigest(),
@@ -103,8 +183,19 @@ class SignedOptiMixin:
                 latest["signed_optiscaler"] = new_record; latest["dxgi_fix"] = False
             else: latest.pop("signed_optiscaler", None)
             self._save_state(state)
+            choice = latest.get("upscaler")
+            if choice and ini:
+                if not enabled:
+                    self._set_ini_sections(ini, {
+                        ("Libraries", "FfxDx12Path"): "auto", ("Libraries", "FfxDx12SRPath"): "auto",
+                        ("FSR", "Fsr4ForceEnableInt8"): "auto", ("FSR", "Fsr4Update"): "auto",
+                    })
+                applied = self._apply_upscaler(appid, target, choice, bool(latest.get("upscaler_watermark")))
+                if applied.get("status") != "success": raise ValueError(applied.get("message", "Could not restore the upscaler"))
         except Exception:
             temporary.write_bytes(current); os.replace(temporary, proxy)
+            if ini_before is not None: ini.write_bytes(ini_before)
+            self._save_state(state_before)
             raise
         return {"status": "success", "message": "Official signed OptiScaler enabled for this game. Upscaler and generator settings are preserved." if enabled
                 else "Original OptiScaler restored for this game."}

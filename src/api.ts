@@ -156,6 +156,7 @@ export type UpscalerInfo = Result & {
   watermark?: boolean;
   rdna4?: boolean;
   fsr4_lite_available?: boolean;
+  signed_sdk?: boolean;
   fsr4_source?: { path: string; version: string; own_prefix: boolean; source?: string } | null;
   gpu_family?: "rdna2" | "rdna3" | "rdna4" | "unknown";
   proton_experimental?: boolean;

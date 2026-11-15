@@ -810,7 +810,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           onMenuWillOpen={openMenuWithFocus}
                       label={t("Upscaler")}
                       description={
-                        upscaler.choice === "fsr4lite"
+                        upscaler.signed_sdk && ["fsr4", "fsr4lite"].includes(upscaler.choice || "")
+                          ? t("Official FSR 4 SDK with signed OptiScaler. DLSS in the game is the input; FSR 4 is the output. INT8 is enabled for this GPU when needed.")
+                          : upscaler.choice === "fsr4lite"
                           ? t("INT8 Lite from your imported libraries. Enable the watermark to verify FSR4L-i8 after launch.")
                           : upscaler.choice === "fsr4"
                           ? t("FSR 4 {0} model{1}{2}", upscaler.rdna4 ? "FP8" : "INT8", upscaler.fsr4_source
