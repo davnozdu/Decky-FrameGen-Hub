@@ -85,6 +85,8 @@ class SignedOpti(unittest.TestCase):
         self.p._apply_upscaler('1',self.game,'fsr31',False)
         self.assertIn('UpscalerIndex=1',self.ini.read_text())
         self.assertIn('Fsr4ForceEnableInt8=false',self.ini.read_text())
+        self.assertIn('Fsr4EnableWatermark=auto',self.ini.read_text())
+        self.assertNotIn('Fsr4EnableWatermark=false',self.ini.read_text())
 
     def test_sdk_foreign_file_is_preserved(self):
         folder=self.game/'OptiScaler/OfficialFSR4';folder.mkdir()

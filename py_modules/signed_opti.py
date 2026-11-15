@@ -87,7 +87,9 @@ class SignedOptiMixin:
             ("FSR", "UpscalerIndex"): "0" if fsr4 else "1",
             ("FSR", "Fsr4Update"): "false",
             ("FSR", "Fsr4ForceEnableInt8"): "true" if fsr4 and not self._gpu_is_rdna4() else "false",
-            ("FSR", "Fsr4EnableWatermark"): "true" if fsr4 and watermark else "false",
+            # SDK checks MLSR-WATERMARK's existence, even when its value is "0".
+            # Upstream false sets "0"; auto leaves the absent variable untouched.
+            ("FSR", "Fsr4EnableWatermark"): "true" if fsr4 and watermark else "auto",
             ("Log", "LogLevel"): "2", ("Log", "LogToFile"): "true",
         }
         if fsr4:
