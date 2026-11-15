@@ -28,6 +28,7 @@ from nsl_games import external_games
 from xefg import GeneratorMixin, XEFG_LOG, XEFG_BUILD
 from lsfg import LsfgMixin
 from fsr4 import Fsr4Mixin
+from signed_opti import SignedOptiMixin
 
 GITHUB_REPO = "apex-compute/ANR"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -84,7 +85,7 @@ def _plugin_version_key(version: str) -> tuple:
     return (_version_key(base), not bool(prerelease), _version_key(prerelease))
 
 
-class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
+class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def _main(self):
@@ -865,9 +866,9 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
 
     _OVERRIDE_RE = re.compile(r"WINEDLLOVERRIDES=(\"[^\"]*\"|'[^']*'|\S*)")
 
-    def _launch_with_override(self, current: str, proxy: str) -> str:
+    def _launch_with_override(self, current: str, proxy: str, mode: str = "n,b") -> str:
         base = proxy[:-4] if proxy.lower().endswith(".dll") else proxy
-        ours = f"{base}=n,b"
+        ours = f"{base}={mode}"
         current = (current or "").strip()
         m = self._OVERRIDE_RE.search(current)
         if m:
@@ -881,7 +882,49 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
             return f'WINEDLLOVERRIDES="{ours}" %command% {current}'
         return f'WINEDLLOVERRIDES="{ours}" %command%'
 
-    def _launch_without_override(self, current: str, proxy: str | None) -> str:
+    def _dxgi_fix_available(self, appid: str) -> bool:
+        entry = self._load_state()["games"].get(str(appid), {})
+        return (entry.get("mode") == "full" and entry.get("proxy") == "dxgi.dll"
+                and entry.get("generator") in ("lsfg", "off")
+                and entry.get("upscaler") in (None, "game", "off")
+                and entry.get("render_quality") in (None, "game")
+                and not any(value not in (None, "auto", "false") for value in entry.get("opti", {}).values()))
+
+    def _optiscaler_required(self, appid: str) -> bool:
+        entry = self._load_state()["games"].get(str(appid), {})
+        return not (entry.get("dxgi_fix", False) and self._dxgi_fix_available(appid))
+
+    async def set_dxgi_fix(self, appid: str, enabled: bool, current: str) -> dict:
+        appid = str(appid)
+        game = self._game(appid)
+        if not game or self._is_running(game):
+            return {"status": "error", "message": "Close the game first."}
+        if enabled and not self._dxgi_fix_available(appid):
+            return {"status": "error", "message": "DXGI bypass is only available for LSFG without OptiScaler upscaling or tuning. FSR 4, ANR and XeFG remain enabled."}
+        state = self._load_state()
+        if appid not in state["games"]:
+            return {"status": "error", "message": "No managed OptiScaler install for this game."}
+        state["games"][appid]["dxgi_fix"] = bool(enabled)
+        self._save_state(state)
+        result = await self.recommended_launch_options(appid, current)
+        result["message"] = "DXGI bypass enabled for this game. LSFG stays active." if enabled else "DXGI bypass disabled for this game."
+        return result
+
+    async def recommended_launch_options(self, appid: str, current: str) -> dict:
+        game = self._game(str(appid))
+        if not game:
+            return {"status": "error", "message": "The game is not in the Steam library."}
+        if self._is_running(game):
+            return {"status": "error", "message": "Close the game first."}
+        entry = self._load_state()["games"].get(str(appid), {})
+        proxy = entry.get("proxy")
+        if entry.get("mode") != "full" or not proxy:
+            return {"status": "success", "launch_options": current}
+        required = self._optiscaler_required(str(appid))
+        return {"status": "success", "launch_options": self._launch_with_override(current, proxy, "n,b" if required else "b"),
+                "optiscaler_required": required}
+
+    def _launch_without_override(self, current: str, proxy: str | None, remove_builtin: bool = False) -> str:
         current = (current or "").strip()
         if not proxy:
             return current
@@ -889,7 +932,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
         m = self._OVERRIDE_RE.search(current)
         if not m:
             return current
-        parts = [p for p in m.group(1).strip("\"'").split(";") if p and p != f"{base}=n,b"]
+        parts = [p for p in m.group(1).strip("\"'").split(";") if p and p not in ({f"{base}=n,b", f"{base}=b"} if remove_builtin else {f"{base}=n,b"})]
         replacement = f'WINEDLLOVERRIDES="{";".join(parts)}"' if parts else ""
         result = " ".join(part for part in (current[:m.start()].rstrip(), replacement, current[m.end():].lstrip()) if part)
         return "" if result == "%command%" else result
@@ -1084,6 +1127,10 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
             "patched": desc["mode"] is not None, "managed": bool(entry),
             "mode": desc["mode"],
             "proxy": desc["proxy"] or (entry or {}).get("proxy"),
+            "optiscaler_required": self._optiscaler_required(appid),
+            "dxgi_fix_enabled": bool((entry or {}).get("dxgi_fix")),
+            "dxgi_fix_available": self._dxgi_fix_available(appid),
+            "signed_optiscaler": bool((entry or {}).get("signed_optiscaler")),
             "target_dir": str(target),
             "target_rel": os.path.relpath(target, root),
             "game_version": game_version,
@@ -1190,6 +1237,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
         previous = state["games"].get(appid, {})
         state["games"][appid] = {
             "generator": previous.get("generator", "anr"),
+            "dxgi_fix": bool(previous.get("dxgi_fix", False)),
+            **({"signed_optiscaler": previous["signed_optiscaler"]} if previous.get("signed_optiscaler") else {}),
             **({"generator_original_output": previous["generator_original_output"]} if "generator_original_output" in previous else {}),
             "upscaler": previous.get("upscaler"),
             "render_quality": previous.get("render_quality"),
@@ -1219,6 +1268,13 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
                 self._save_state(state)
                 return {"status": "error", "launch_options": launch_options,
                         "message": f"ANR installed, but the saved generator could not be restored: {exc}. Select XeFG again."}
+        if previous.get("signed_optiscaler"):
+            try:
+                self._set_signed_optiscaler(appid, True, reapply=True)
+            except Exception as exc:
+                return {"status": "error", "launch_options": launch_options, "message": str(exc)}
+        if proxy:
+            launch_options = self._launch_with_override(launch_options, proxy, "n,b" if self._optiscaler_required(appid) else "b")
         return {
             "status": "success",
             "launch_options": launch_options,
@@ -1307,7 +1363,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin):
         state = self._load_state()
         state["games"].pop(appid, None)
         self._save_state(state)
-        launch = self._launch_without_override(current_launch_options, proxy)
+        launch = self._launch_without_override(current_launch_options, proxy, bool((entry or {}).get("dxgi_fix")))
         # A pre-existing override belongs to the user (e.g. a restored ReShade DLL).
         original = (entry or {}).get("original_launch_options", "")
         if proxy:

@@ -40,6 +40,9 @@ import {
   PerfSession,
   installBundled,
   listGames,
+  recommendedLaunchOptions,
+  setDxgiFix,
+  setSignedOptiscaler,
   syncShortcuts,
   listOutdatedGames,
   patchGame,
@@ -367,7 +370,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   const [appid, setAppid] = useState<string>(() => rememberedAppId);
   const [status, setStatus] = useState<GameStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
-  const [busy, setBusy] = useState<"patch" | "unpatch" | "generator" | null>(null);
+  const [busy, setBusy] = useState<"patch" | "unpatch" | "generator" | "compat" | null>(null);
   const [dirChoice, setDirChoice] = useState<string>(AUTO_DIR);
   const [log, setLog] = useState<string>("");
   const [perf, setPerf] = useState<{
@@ -378,6 +381,8 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   const [upscaler, setUpscalerInfo] = useState<UpscalerInfo | null>(null);
   const [opti, setOpti] = useState<Record<string, string>>({});
   const [copyFrom, setCopyFrom] = useState<string>("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showLaunchDetails, setShowLaunchDetails] = useState(false);
   const generatorQueue = useRef<Promise<unknown>>(Promise.resolve());
   const generatorPending = useRef(0);
   const [generatorSaving, setGeneratorSaving] = useState(false);
@@ -477,7 +482,38 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     }
   };
 
+  const syncLaunchMode = async (id: string) => {
+    const current = await getLaunchOptions(Number(id));
+    const r = await recommendedLaunchOptions(id, current);
+    if (r.status === "success" && r.launch_options !== undefined && r.launch_options !== current) {
+      setLaunchOptions(Number(id), r.launch_options);
+    }
+    return r;
+  };
+
+  const changeSignedOptiscaler = withSettingFocus(async (enabled: boolean) => {
+    if (busy !== null) return;
+    const id = appid;
+    setBusy("compat");
+    try {
+      const current = await getLaunchOptions(Number(id));
+      const result = await setSignedOptiscaler(id, enabled, current);
+      if (result.status === "success" && result.launch_options !== undefined) setLaunchOptions(Number(id), result.launch_options);
+      toast(result.message || result.status);
+    } catch (error) { toast(errorText(error)); }
+    finally { setBusy(null); await loadStatus(id, true); }
+  });
+
+  const changeDxgiFix = withSettingFocus(async (enabled: boolean) => {
+    const current = await getLaunchOptions(Number(appid));
+    const result = await setDxgiFix(appid, enabled, current);
+    if (result.status === "success" && result.launch_options !== undefined) setLaunchOptions(Number(appid), result.launch_options);
+    toast(result.message || result.status);
+    await loadStatus(appid, true);
+  });
+
   const changeGenerator = withSettingFocus(async (choice: string, lsfg?: Partial<LsfgProfile>) => {
+    if (busy !== null) return;
     const requestApp = appid;
     setLog("");
     setPerf(null);
@@ -493,6 +529,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     generatorQueue.current = saved;
     try {
       const r = await saved;
+      if (r.status === "success") await syncLaunchMode(requestApp);
       toast(r.message || r.status);
     } catch (e) {
       toast(errorText(e));
@@ -517,8 +554,10 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   });
 
   const changeUpscaler = withSettingFocus(async (choice: string, watermark: boolean) => {
+    if (busy !== null) return;
     try {
       const r = await setUpscaler(appid, choice, watermark);
+      if (r.status === "success") await syncLaunchMode(appid);
       toast(r.message || r.status);
     } catch (e) {
       toast(errorText(e));
@@ -527,12 +566,14 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   });
 
   const changeOpti = withSettingFocus(async (key: string, value: string) => {
+    if (busy !== null) return;
     const before = opti[key];
     setOpti((cur) => ({ ...cur, [key]: value }));
     let ok = false;
     try {
       const r = await setOptiSetting(appid, key, value);
       ok = r.status === "success";
+      if (ok) await syncLaunchMode(appid);
       if (!ok) toast(r.message || t("Failed."));
       else if (r.message && (r.message.includes(t("Turned off")) || status?.running)) toast(r.message);
       if (ok) {
@@ -557,8 +598,10 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   });
 
   const changeRenderQuality = withSettingFocus(async (choice: string) => {
+    if (busy !== null) return;
     try {
       const r = await setRenderQuality(appid, choice);
+      if (r.status === "success") await syncLaunchMode(appid);
       toast(r.message || r.status);
     } catch (e) {
       toast(errorText(e));
@@ -616,22 +659,18 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     : genChoice === "custom" ? status?.generator?.provider || "custom"
     : "ANR FG";
   const proxyBase = (status?.proxy || "dxgi.dll").replace(/\.dll$/i, "");
-  const anrLaunchLine = `WINEDLLOVERRIDES="${proxyBase}=n,b" %command%`;
-  const launchHasOverride = launchOptions.includes(`${proxyBase}=n,b`);
+  const proxyMode = status?.optiscaler_required === false ? "b" : "n,b";
+  const anrLaunchLine = `WINEDLLOVERRIDES="${proxyBase}=${proxyMode}" %command%`;
+  const launchHasOverride = launchOptions.includes(`${proxyBase}=${proxyMode}`);
 
   const copyLaunch = async () => {
     toast((await copyText(anrLaunchLine)) ? t("Copied: {0}", anrLaunchLine) : t("Could not copy to the clipboard."));
   };
 
   const applyLaunch = async () => {
-    const current = await getLaunchOptions(Number(appid));
-    const next = current.includes(`${proxyBase}=n,b`)
-      ? current
-      : current.includes("%command%")
-      ? `WINEDLLOVERRIDES="${proxyBase}=n,b" ${current}`.trim()
-      : `${anrLaunchLine} ${current}`.trim();
-    setLaunchOptions(Number(appid), next);
-    toast(t("Launch options: {0}", next));
+    const r = await syncLaunchMode(appid);
+    if (r.status !== "success") toast(r.message || r.status);
+    else toast(t("Launch options: {0}", r.launch_options || launchOptions));
     window.setTimeout(() => void loadStatus(appid, true), 500);
   };
   const outdated =
@@ -669,36 +708,26 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       {game && (
         <>
           <PanelSectionRow>
-            <Field label={t("Status")} focusable>
-              <span style={{ color: patched ? (outdated ? "#ffd866" : "#3fb950") : undefined, fontWeight: 600 }}>
-                {statusText}
-              </span>
-            </Field>
-          </PanelSectionRow>
-
-          <PanelSectionRow>
-            <ButtonItem layout="below"
-              description={status?.running ? t("Close the game to restore it.")
-                : patched || status?.lsfg || status?.managed
-                ? t("Removes this plugin's patches, disables its Lossless Scaling profile and restores backed-up files. Other mods and shared imported libraries are kept.")
-                : t("This game has no changes managed by this plugin.")}
-              disabled={busy !== null || generatorSaving || loadingStatus || status?.running || !(patched || status?.lsfg || status?.managed)}
-              onClick={doUnpatch}>
-              {busy === "unpatch" ? t("Restoring game…") : t("Restore game (remove plugin patches)")}
-            </ButtonItem>
-          </PanelSectionRow>
-
-          {status?.proton && (
-            <PanelSectionRow>
-              <div style={{ ...small, color: status.proton.native ? "#ffd866" : undefined }}>
-                {status.proton.native
-                  ? t("Native Linux build (no .exe): ANR FG needs the Windows version under Proton.")
-                  : `Proton: ${status.proton.tool ?? t("Steam default")}${
-                      status.proton.source === "default" ? t(" (default)") : ""
-                    }${status.proton.prefix ? t(", prefix {0}", status.proton.prefix) : ""}`}
+            <div style={{ padding: "12px", borderRadius: "10px", background: "rgba(103,160,220,0.10)", border: "1px solid rgba(137,184,229,0.20)", width: "100%", boxSizing: "border-box" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "10px" }}>
+                <b style={{ fontSize: "13px" }}>{t("Current setup")}</b>
+                <span style={{ fontSize: "11px", color: status?.running ? "#e9c46a" : "#86dca5", borderRadius: "12px", padding: "2px 7px", background: "rgba(255,255,255,0.06)" }}>
+                  {status?.running ? t("Running") : t("Ready to configure")}
+                </span>
               </div>
-            </PanelSectionRow>
-          )}
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "8px", fontSize: "12px" }}>
+                <span style={{ opacity: 0.7 }}>{t("Image upscaling")}</span>
+                <b>{upscaler?.choice ? upscaler.options?.find(o => o.value === upscaler.choice)?.label || upscaler.choice : t("Package defaults")}</b>
+                <span style={{ opacity: 0.7 }}>{t("Frame generation")}</span>
+                <b style={{ textAlign: "right" }}>{status?.lsfg ? "LSFG" : patched ? generatorLabel : t("Off")}</b>
+              </div>
+              {status?.status === "error" && <div style={{ ...small, color: "#ff9b91", marginTop: "8px" }}>{status.message}</div>}
+            </div>
+          </PanelSectionRow>
+
+
+
+
 
           {status?.running && (
             <PanelSectionRow>
@@ -706,11 +735,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             </PanelSectionRow>
           )}
 
-          {patched && status?.target_rel && (
-            <PanelSectionRow>
-              <div style={small}>{t("Folder:")}{" "}{status.target_rel}</div>
-            </PanelSectionRow>
-          )}
+
 
           {!patched && status?.installed !== false && (
             <>
@@ -752,6 +777,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             </PanelSectionRow>
           )}
 
+          {(!patched || outdated) && <>
           <PanelSectionRow>
             <ButtonItem
               layout="below"
@@ -768,87 +794,15 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             </ButtonItem>
           </PanelSectionRow>
 
+          </>}
 
 
-          {patched && (
-            <PanelSectionRow>
-              <div
-                style={{
-                  ...small,
-                  opacity: 1,
-                  padding: "8px",
-                  borderRadius: "6px",
-                  background: "rgba(63,185,80,0.12)",
-                }}
-              >
-                <b>{t("Next steps")}</b>
-                <br />
-                {" "}{t("1. Start the game from Steam as usual.")}{" "}<br />
-                {" "}{t("2. Graphics / Video settings: turn on Frame Generation and pick")}{" "}<b>DLSS Frame Generation</b> {" "}{t("(the NVIDIA option, not FSR).")}{" "}{generatorLabel} {" "}{t("takes its place.")}{" "}<br />
-                {" "}{t("3. Turn in-game V-Sync off; limit FPS from the Steam menu if needed.")}{" "}<br />
-                {" "}{t("4. Check it works: \"Show generator log\" below, or the FPS counter.")}{" "}</div>
-            </PanelSectionRow>
-          )}
 
-          {patched && status?.mode === "full" && (
-            <>
-              <PanelSectionRow>
-                <Field label={t("Launch options")} focusable bottomSeparator="none">
-                  <span style={{ color: launchHasOverride ? "#3fb950" : "#ffd866" }}>
-                    {launchHasOverride ? t("Set") : t("Missing")}
-                  </span>
-                </Field>
-              </PanelSectionRow>
-              <PanelSectionRow>
-                <div style={small}>{launchOptions || t("(empty)")}</div>
-              </PanelSectionRow>
-              <PanelSectionRow>
-                <ButtonItem layout="below" onClick={copyLaunch}>
-                  {" "}{t("Copy launch options")}{" "}</ButtonItem>
-              </PanelSectionRow>
-              {!launchHasOverride && (
-                <PanelSectionRow>
-                  <ButtonItem layout="below" onClick={applyLaunch}>
-                    {" "}{t("Apply launch options to the game")}{" "}</ButtonItem>
-                </PanelSectionRow>
-              )}
-            </>
-          )}
 
 
           {patched && (
             <>
-              <PanelSectionRow>
-                <DropdownItem
-          onMenuWillOpen={openMenuWithFocus}
-                  label={t("Frame generator")}
-                  description={busy === "generator"
-                    ? t("Preparing generator… First XeFG setup downloads about 75 MB.")
-                    : genChoice === "lsfg"
-                    ? t("Lossless Scaling is selected. Performance mode, multiplier and motion scale are below. Close the game to change settings.")
-                    : t("Close the game to switch. XeFG is a beta for DirectX 12 games; Proton compatibility is experimental.")}
-                  disabled={busy !== null || status?.running}
-                  selectedOption={status?.generator?.choice || "anr"}
-                  rgOptions={[
-                    { data: "anr", label: "ANR FG" },
-                    ...(status?.generator?.available !== false ? [{ data: "xefg", label: t("XeFG XMX Port · Build 10 (beta)") }] : []),
-                    { data: "lsfg", label: "Lossless Scaling (lsfg-vk)" },
-                    { data: "off", label: "Off" },
-                    ...(status?.generator?.choice === "custom" ? [{ data: "custom", label: status.generator.provider }] : []),
-                  ]}
-                  onChange={(o) => { if (o.data !== "custom") void changeGenerator(String(o.data)); }}
-                />
-              </PanelSectionRow>
-              {isXefg && (
-                <PanelSectionRow>
-                  <div style={small}>
-                    {" "}{t("XeFG needs DirectX 12 and SDR or HDR10. Start with 2X. The ANR compute settings below are hidden; the frame multiplier and upscaler still apply.")}{" "}</div>
-                </PanelSectionRow>
-              )}
-              {genChoice === "lsfg" && (
-                <LsfgControls profile={status?.lsfg || null} busy={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
-                  onChange={(p) => void changeGenerator("lsfg", p)} />
-              )}
+              <PanelSectionRow><div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.07em", opacity: 0.65, marginTop: "14px" }}>{t("1 · Image quality")}</div></PanelSectionRow>
               {upscaler?.options && (
                 <>
                   <PanelSectionRow>
@@ -933,6 +887,147 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   )}
                 </>
               )}
+              <PanelSectionRow><div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.07em", opacity: 0.65, marginTop: "14px" }}>{t("2 · Smoothness")}</div></PanelSectionRow>
+              <PanelSectionRow>
+                <DropdownItem
+          onMenuWillOpen={openMenuWithFocus}
+                  label={t("Frame generator")}
+                  description={busy === "generator"
+                    ? t("Preparing generator… First XeFG setup downloads about 75 MB.")
+                    : genChoice === "lsfg"
+                    ? t("Lossless Scaling is selected. Performance mode, multiplier and motion scale are below. Close the game to change settings.")
+                    : t("Close the game to switch. XeFG is a beta for DirectX 12 games; Proton compatibility is experimental.")}
+                  disabled={busy !== null || status?.running}
+                  selectedOption={status?.generator?.choice || "anr"}
+                  rgOptions={[
+                    { data: "anr", label: "ANR FG" },
+                    ...(status?.generator?.available !== false ? [{ data: "xefg", label: t("XeFG XMX Port · Build 10 (beta)") }] : []),
+                    { data: "lsfg", label: "Lossless Scaling (lsfg-vk)" },
+                    { data: "off", label: "Off" },
+                    ...(status?.generator?.choice === "custom" ? [{ data: "custom", label: status.generator.provider }] : []),
+                  ]}
+                  onChange={(o) => { if (o.data !== "custom") void changeGenerator(String(o.data)); }}
+                />
+              </PanelSectionRow>
+              {isXefg && (
+                <PanelSectionRow>
+                  <div style={small}>
+                    {" "}{t("XeFG needs DirectX 12 and SDR or HDR10. Start with 2X. The ANR compute settings below are hidden; the frame multiplier and upscaler still apply.")}{" "}</div>
+                </PanelSectionRow>
+              )}
+              {genChoice === "lsfg" && (
+                <LsfgControls profile={status?.lsfg || null} busy={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
+                  onChange={(p) => void changeGenerator("lsfg", p)} />
+              )}
+              <PanelSectionRow><div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.07em", opacity: 0.65, marginTop: "14px" }}>{t("3 · Compatibility")}</div></PanelSectionRow>
+              {status?.mode === "full" && (
+                <PanelSectionRow>
+                  <ToggleField label={t("Fix DXGI loading (signed OptiScaler)")}
+                    description={busy === "compat"
+                      ? t("Preparing compatibility fix… The first download is about 55 MB.")
+                      : t("For this game only. Uses the official signed loader for games that reject unsigned DLLs. Keeps FSR 4 and your frame generator. Switch off to restore the previous loader.")}
+                    checked={Boolean(status.signed_optiscaler)}
+                    disabled={Boolean(status.running) || busy !== null}
+                    onChange={(enabled: boolean) => void changeSignedOptiscaler(enabled)} />
+                </PanelSectionRow>
+              )}
+          {patched && (
+            <PanelSectionRow>
+              <div style={{ ...small, opacity: 1, padding: "10px 12px", borderRadius: "8px", background: "rgba(255,255,255,0.045)" }}>
+                <b>{t("For the next launch")}</b><br />
+                {genChoice === "lsfg"
+                  ? t("LSFG: turn off the game's own frame generation. Upscaling is configured separately below.")
+                  : t("ANR / XeFG: enable DLSS Frame Generation in the game. The selected generator replaces it.")}
+                {game?.name === "Diablo IV" && <><br />{t("Battle.net: close an already-running client, then launch this game's Steam shortcut to apply its launch options.")}</>}
+              </div>
+            </PanelSectionRow>
+          )}
+
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={() => setShowLaunchDetails(value => !value)}>
+                  {showLaunchDetails ? t("Hide launch options") : t("Show launch options")}
+                </ButtonItem>
+              </PanelSectionRow>
+              {showLaunchDetails && <>
+          {patched && status?.mode === "full" && (
+            <>
+              <PanelSectionRow>
+                <Field label={t("Launch options")} focusable bottomSeparator="none">
+                  <span style={{ color: launchHasOverride ? "#3fb950" : "#ffd866" }}>
+                    {launchHasOverride ? t("Set") : t("Missing")}
+                  </span>
+                </Field>
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <div style={small}>{launchOptions || t("(empty)")}</div>
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={copyLaunch}>
+                  {" "}{t("Copy launch options")}{" "}</ButtonItem>
+              </PanelSectionRow>
+              {!launchHasOverride && (
+                <PanelSectionRow>
+                  <ButtonItem layout="below" onClick={applyLaunch}>
+                    {" "}{t("Apply launch options to the game")}{" "}</ButtonItem>
+                </PanelSectionRow>
+              )}
+            </>
+          )}              </>}
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={() => setShowAdvanced(value => !value)}
+                  description={t("Fine tuning, diagnostics and restoring original game files.")}>
+                  {showAdvanced ? t("Hide advanced settings") : t("Advanced settings")}
+                </ButtonItem>
+              </PanelSectionRow>
+              {showAdvanced && <>
+              {patched && !outdated && <>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              disabled={!info?.installed || busy !== null || generatorSaving || loadingStatus || status?.running}
+              onClick={doPatch}
+            >
+              {busy === "patch"
+                ? t("Installing…")
+                : patched
+                ? outdated
+                  ? t("Update to {0}", status?.active_version)
+                  : t("Reinstall ANR FG")
+                : t("Install ANR FG")}
+            </ButtonItem>
+          </PanelSectionRow>
+
+              </>}
+
+              {status?.proxy === "dxgi.dll" && status.mode === "full" && (
+                <PanelSectionRow>
+                  <ToggleField label={t("LSFG only: bypass OptiScaler")}
+                    description={status.dxgi_fix_available
+                      ? t("For this game only. Bypasses OptiScaler for LSFG-only use. This is a crash workaround, not an FPS boost.")
+                      : t("Not applied while FSR 4, another OptiScaler upscaler, ANR or XeFG is selected. Those features keep OptiScaler enabled.")}
+                    checked={Boolean(status.dxgi_fix_enabled && status.dxgi_fix_available)}
+                    disabled={Boolean(status.running) || busy !== null || !status.dxgi_fix_available || Boolean(status.signed_optiscaler)}
+                    onChange={(enabled: boolean) => void changeDxgiFix(enabled)} />
+                </PanelSectionRow>
+              )}
+
+              <PanelSectionRow><div style={small}>{statusText}</div></PanelSectionRow>
+          {status?.proton && (
+            <PanelSectionRow>
+              <div style={{ ...small, color: status.proton.native ? "#ffd866" : undefined }}>
+                {status.proton.native
+                  ? t("Native Linux build (no .exe): ANR FG needs the Windows version under Proton.")
+                  : `Proton: ${status.proton.tool ?? t("Steam default")}${
+                      status.proton.source === "default" ? t(" (default)") : ""
+                    }${status.proton.prefix ? t(", prefix {0}", status.proton.prefix) : ""}`}
+              </div>
+            </PanelSectionRow>
+          )}
+          {patched && status?.target_rel && (
+            <PanelSectionRow>
+              <div style={small}>{t("Folder:")}{" "}{status.target_rel}</div>
+            </PanelSectionRow>
+          )}
               <PanelSectionRow>
                 <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>
                   {" "}{t("Game profile · tuning (OptiScaler). Close the game, change, start it again.")}{" "}</div>
@@ -1135,6 +1230,18 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   <pre style={{ ...small, whiteSpace: "pre-wrap", maxHeight: "240px", overflowY: "auto" }}>{log}</pre>
                 </PanelSectionRow>
               )}
+          <PanelSectionRow>
+            <ButtonItem layout="below"
+              description={status?.running ? t("Close the game to restore it.")
+                : patched || status?.lsfg || status?.managed
+                ? t("Removes this plugin's patches, disables its Lossless Scaling profile and restores backed-up files. Other mods and shared imported libraries are kept.")
+                : t("This game has no changes managed by this plugin.")}
+              disabled={busy !== null || generatorSaving || loadingStatus || status?.running || !(patched || status?.lsfg || status?.managed)}
+              onClick={doUnpatch}>
+              {busy === "unpatch" ? t("Restoring game…") : t("Restore game (remove plugin patches)")}
+            </ButtonItem>
+          </PanelSectionRow>
+              </>}
             </>
           )}
 
@@ -1438,6 +1545,7 @@ function Content() {
   const focusRoot = useRef<HTMLDivElement>(null);
   useEffect(() => registerFocusRoot(focusRoot.current), []);
   const [fsrRevision, setFsrRevision] = useState(0);
+  const [showTools, setShowTools] = useState(false);
   const [info, setInfo] = useState<AnrInfo | null>(null);
   const reload = useCallback(async () => {
     try {
@@ -1451,11 +1559,21 @@ function Content() {
   return (
     <div ref={focusRoot} style={{ display: "contents" }}>
       <LegacyBanner />
-      <PackageSection info={info} reload={reload} />
-      <Fsr4Libraries onImported={() => setFsrRevision((v) => v + 1)} />
       <GameSection key={fsrRevision} info={info} />
-      <BenchmarkSection />
-      <HelpSection />
+      <PanelSection title={t("Tools")}>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={() => setShowTools(value => !value)}
+            description={t("Imported FSR libraries, plugin updates, benchmarks and help.")}>
+            {showTools ? t("Hide libraries and updates") : t("Libraries and updates")}
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
+      {showTools && <>
+        <PackageSection info={info} reload={reload} />
+        <Fsr4Libraries onImported={() => setFsrRevision((v) => v + 1)} />
+        <BenchmarkSection />
+        <HelpSection />
+      </>}
     </div>
   );
 }
@@ -1482,7 +1600,7 @@ export default definePlugin(() => {
   const listener = addEventListener<[string, string]>("anr_update_available", onUpdate);
   return {
     name: TITLE,
-    titleView: <div>{TITLE}</div>,
+    titleView: <div style={{ fontSize: "16px", lineHeight: "20px", fontWeight: 700 }}>FrameGen Hub</div>,
     content: <LocalizedContent />,
     icon: <MdAutoAwesome />,
     onDismount() {

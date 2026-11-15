@@ -27,6 +27,10 @@ export type GameStatus = Result & {
   managed?: boolean;
   mode?: "full" | "addon" | null;
   proxy?: string | null;
+  optiscaler_required?: boolean;
+  dxgi_fix_enabled?: boolean;
+  dxgi_fix_available?: boolean;
+  signed_optiscaler?: boolean;
   target_dir?: string;
   target_rel?: string;
   game_version?: string | null;
@@ -50,6 +54,9 @@ export const updateFromGithub = callable<[], Result & { version?: string }>("upd
 export const setActiveVersion = callable<[version: string], Result>("set_active_version");
 export const syncShortcuts = callable<[shortcuts: import("./steam").LiveShortcut[]], Result>("sync_shortcuts");
 export const listGames = callable<[], Result & { games: GameEntry[] }>("list_games");
+export const setSignedOptiscaler = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_signed_optiscaler");
+export const setDxgiFix = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_dxgi_fix");
+export const recommendedLaunchOptions = callable<[appid: string, current: string], PatchResult>("recommended_launch_options");
 export const getGameStatus = callable<[appid: string], GameStatus>("get_game_status");
 export const patchGame = callable<
   [appid: string, current_launch_options: string, target_dir: string],

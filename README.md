@@ -247,3 +247,5 @@ npm run build
 Plugin code: BSD-3-Clause. ANR FG is © Apex Compute and distributed as published in its GitHub releases.
 OptiScaler (inside the ANR FG full package) is GPL-3.0; the source of the bundled build (Apex OptiScaler, upstream
 `d6b02459`) is [anr-fg-V.B16-full-optiscaler-source.zip](https://github.com/apex-compute/ANR/releases/download/FG-V.B16/anr-fg-V.B16-full-optiscaler-source.zip).
+
+Per-game compatibility: an opt-in signed OptiScaler core from the official v0.9.4 archive (pinned SHA-256) can replace a managed loader, preserving the upscaler and frame generator. The previous core is backed up for rollback. Other game profiles remain unchanged. An independent LSFG-only bypass is available under Advanced settings and is ineligible when OptiScaler features are selected.
