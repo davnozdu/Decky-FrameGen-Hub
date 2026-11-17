@@ -163,6 +163,9 @@ class GeneratorMixin:
             return
         if choice not in ("anr", "xefg"):
             raise ValueError("Unknown frame generator")
+        if (self._load_state()["games"].get(str(appid), {}).get("nightly_optiscaler")
+                or self._signed_core_has_lite(self._load_state()["games"].get(str(appid), {}))):
+            raise ValueError("ANR FG and XeFG require the package core. Select ANR package in OptiScaler version first.")
         target, desc, ini = self._target_and_ini(appid)
         if choice == "xefg":
             if desc.get("proxy") == "winmm.dll":
@@ -195,6 +198,9 @@ class GeneratorMixin:
                     raise ValueError("XeFG supports DirectX 12 games only; this install uses the Vulkan loader.")
                 if choice not in ("anr", "xefg"):
                     raise ValueError("Unknown frame generator")
+                if (self._load_state()["games"].get(appid, {}).get("nightly_optiscaler")
+                        or self._signed_core_has_lite(self._load_state()["games"].get(appid, {}))):
+                    raise ValueError("ANR FG and XeFG require the package core. Select ANR package in OptiScaler version first.")
                 source = await asyncio.to_thread(self._ensure_xefg) if choice == "xefg" else None
                 if self._is_running(game):
                     raise ValueError("The game started during download. Close it and try again.")

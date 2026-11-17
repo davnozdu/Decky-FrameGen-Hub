@@ -8,6 +8,7 @@ uninstall.sh for each game and edits nr_fg.ini. The frontend sets the Steam laun
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -28,7 +29,7 @@ from nsl_games import external_games
 from xefg import GeneratorMixin, XEFG_LOG, XEFG_BUILD
 from lsfg import LsfgMixin
 from fsr4 import Fsr4Mixin
-from signed_opti import SignedOptiMixin
+from signed_opti import SignedOptiMixin, SIGNED_LITE_VERSION
 
 GITHUB_REPO = "apex-compute/ANR"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -762,10 +763,17 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
         except Exception:
             return None
         norm = lambda s: s.lower().replace("\\", "/").replace("z:/", "/")
+
+        def forms(exe: Path) -> list[str]:
+            # Wine shows games inside a prefix (Battle.net, EA, Epic) as C:\..., not as the Linux path.
+            n = norm(str(exe))
+            i = n.find("/drive_c/")
+            return [n, "c:/" + n[i + len("/drive_c/"):]] if i >= 0 else [n]
+
+        patterns = [(form, exe) for exe in candidates for form in forms(exe)]
         best: tuple[int, Path] | None = None
         for line in map(norm, lines):
-            for exe in candidates:
-                n = norm(str(exe))
+            for n, exe in patterns:
                 if n in line and (best is None or len(n) > best[0]):
                     best = (len(n), exe)
         return best[1] if best else None
@@ -1131,6 +1139,11 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             "dxgi_fix_enabled": bool((entry or {}).get("dxgi_fix")),
             "dxgi_fix_available": self._dxgi_fix_available(appid),
             "signed_optiscaler": bool((entry or {}).get("signed_optiscaler")),
+            "signed095_available": (self._runtime_dir() / "official-optiscaler" / SIGNED_LITE_VERSION / "official.7z").is_file(),
+            "optiscaler_core": self._active_core(entry or {}),
+            "optiscaler_cores": {"fg": self._preferred_core(entry or {}, "fg"), "ls": self._preferred_core(entry or {}, "ls")},
+            "requires_signed_core": self._requires_signed_core(game),
+            "fg_available": self._fg_available(game, entry or {}),
             "target_dir": str(target),
             "target_rel": os.path.relpath(target, root),
             "game_version": game_version,
@@ -1239,6 +1252,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             "generator": previous.get("generator", "anr"),
             "dxgi_fix": bool(previous.get("dxgi_fix", False)),
             **({"signed_optiscaler": previous["signed_optiscaler"]} if previous.get("signed_optiscaler") else {}),
+            **({"nightly_optiscaler": previous["nightly_optiscaler"]} if previous.get("nightly_optiscaler") else {}),
             **({"generator_original_output": previous["generator_original_output"]} if "generator_original_output" in previous else {}),
             "upscaler": previous.get("upscaler"),
             "render_quality": previous.get("render_quality"),
@@ -1268,11 +1282,23 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
                 self._save_state(state)
                 return {"status": "error", "launch_options": launch_options,
                         "message": f"ANR installed, but the saved generator could not be restored: {exc}. Select XeFG again."}
-        if previous.get("signed_optiscaler"):
+        if previous.get("signed_optiscaler") or previous.get("nightly_optiscaler"):
             try:
-                self._set_signed_optiscaler(appid, True, reapply=True)
+                core = ("signed095" if self._signed_core_has_lite(previous) else "signed") if previous.get("signed_optiscaler") else "nightly"
+                self._set_optiscaler_core(appid, core, reapply=True)
             except Exception as exc:
-                return {"status": "error", "launch_options": launch_options, "message": str(exc)}
+                # The fresh ANR proxy is unsigned: drop the stale record so the upscaler is
+                # configured for the installed core rather than the official SDK.
+                state = self._load_state()
+                state["games"][appid].pop("signed_optiscaler", None)
+                state["games"][appid].pop("nightly_optiscaler", None)
+                self._save_state(state)
+                try:
+                    self._reapply_upscaler(appid, target)
+                except Exception as inner:
+                    decky.logger.error(f"[ANR] re-applying the upscaler for {appid}: {inner}")
+                return {"status": "error", "launch_options": launch_options,
+                        "message": f"ANR installed, but the selected OptiScaler core could not be restored: {exc}. Enable it again."}
         if proxy:
             launch_options = self._launch_with_override(launch_options, proxy, "n,b" if self._optiscaler_required(appid) else "b")
         return {
@@ -1795,11 +1821,15 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
         return {}
 
     def _apply_fsr4_lite(self, appid: str, ini: Path, watermark: bool) -> dict:
+        ini = ini.resolve()
         src = self._local_fsr4_source()
         if not src:
             return {"status": "error", "message": "Import a ZIP with both FSR 4 Lite DLLs in FSR 4 libraries first."}
         state = self._load_state()
+        state_before = copy.deepcopy(state)
+        ini_before = ini.read_bytes()
         entry = state["games"].setdefault(appid, {})
+        signed_lite = self._signed_core_has_lite(entry)
         managed = entry.setdefault("managed_files", [])
         folder = self._optiscaler_main_dir(ini)
         # Validate every destination before copying either DLL. Never claim user-owned files.
@@ -1822,6 +1852,30 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
                 for name in src["hashes"]:
                     os.replace(stage / name, folder / name)
                     replaced.append(name)
+                for name, expected in src["hashes"].items():
+                    dest = folder / name
+                    managed[:] = [m for m in managed if m.get("path") != str(dest)]
+                    managed.append({"path": str(dest), "sha256": expected})
+                self._set_ini_sections(ini, {
+                    ("Upscalers", "Dx12Upscaler"): "fsr31" if signed_lite else "ffx",
+                    ("FSR", "UpscalerIndex"): "0",
+                    ("FSR", "Fsr4GpuSupport"): "auto" if signed_lite else "4", ("FSR", "Fsr4Model"): "auto" if signed_lite else "3",
+                    ("FSR", "Fsr4ForceEnableInt8"): "3" if signed_lite else "auto",
+                    ("FSR", "Fsr4Update"): "true" if signed_lite else "auto",
+                    # "false" makes OptiScaler export MLSR-WATERMARK=0, and AMD's library only checks
+                    # that the variable exists. "auto" leaves it unset (see signed_opti.py).
+                    ("FSR", "Fsr4EnableWatermark"): "true" if watermark else "auto",
+                    ("Log", "LogLevel"): "2", ("Log", "LogToFile"): "true",
+                })
+                if signed_lite:
+                    # Stable 0.9 defaults MainDllPath to the proxy's directory, while v10
+                    # defaults to OptiScaler/. An explicit path prevents the older prefix
+                    # driver in system32 from winning the library search.
+                    self._set_ini_sections(ini, {
+                        ("Libraries", "OptiDllPath"): "Z:" + str(folder.resolve()).replace("/", "\\"),
+                    })
+                entry.update(upscaler="fsr4lite", upscaler_watermark=bool(watermark))
+                self._save_state(state)
             except Exception:
                 for name in reversed(replaced):
                     backup = stage / (name + ".backup")
@@ -1829,20 +1883,10 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
                         os.replace(backup, folder / name)
                     else:
                         (folder / name).unlink()
+                ini.write_bytes(ini_before)
+                self._save_state(state_before)
                 raise
-        for name, expected in src["hashes"].items():
-            dest = folder / name
-            managed[:] = [m for m in managed if m.get("path") != str(dest)]
-            managed.append({"path": str(dest), "sha256": expected})
-        self._set_ini_sections(ini, {
-            ("Upscalers", "Dx12Upscaler"): "ffx",
-            ("FSR", "UpscalerIndex"): "0",
-            ("FSR", "Fsr4GpuSupport"): "4", ("FSR", "Fsr4Model"): "3",
-            ("FSR", "Fsr4EnableWatermark"): "true" if watermark else "false",
-            ("Log", "LogLevel"): "2", ("Log", "LogToFile"): "true",
-        })
-        entry.update(upscaler="fsr4lite", upscaler_watermark=bool(watermark))
-        self._save_state(state)
+
         return {"status": "success", "message": "FSR 4 INT8 Lite selected from your imported libraries. Restart the game."}
 
     def _apply_upscaler(self, appid: str, target: Path, choice: str, watermark: bool) -> dict:
@@ -1850,7 +1894,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
         ini = self._optiscaler_ini(target, desc)
         if not ini or not ini.exists():
             return {"status": "error", "message": "OptiScaler.ini not found for this game."}
-        if self._load_state()["games"].get(str(appid), {}).get("signed_optiscaler"):
+        core_entry = self._load_state()["games"].get(str(appid), {})
+        if core_entry.get("signed_optiscaler") and not (choice == "fsr4lite" and self._signed_core_has_lite(core_entry)):
             return self._apply_signed_upscaler(appid, ini, choice, watermark)
         if choice == "fsr4lite":
             return self._apply_fsr4_lite(appid, ini, watermark)
@@ -1870,12 +1915,16 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             ours = any(m.get("path") == str(dll_dest) for m in managed)
             if dll_dest.exists() and not ours and not existing:
                 return {"status": "error", "message": f"{dll_dest.name} in the game folder is not AMD's; not replaced."}
-            if not existing or _version_key(existing["version"]) < _version_key(src["version"]):
-                shutil.copy2(src["path"], dll_dest)
-            if ours:
+            if dll_dest.exists() and not ours:
+                # The user's own AMD library: use it as is, never overwrite or claim it
+                # (a claimed file would be deleted when switching to another upscaler).
+                note = f" (your AMD FidelityFX {existing['version']} in the game folder is kept)"
+            else:
+                if not existing or _version_key(existing["version"]) < _version_key(src["version"]):
+                    shutil.copy2(src["path"], dll_dest)
                 managed = [m for m in managed if m.get("path") != str(dll_dest)]
-            managed.append({"path": str(dll_dest), "sha256": self._file_sha256(dll_dest)})
-            note = f" (AMD FidelityFX {src['version']} from {src.get('source', 'Proton')})"
+                managed.append({"path": str(dll_dest), "sha256": self._file_sha256(dll_dest)})
+                note = f" (AMD FidelityFX {src['version']} from {src.get('source', 'Proton')})"
             # Remove a managed Vulkan Lite provider when switching back to standard FSR 4.
             for m in list(managed):
                 p = Path(m.get("path", ""))
@@ -1912,6 +1961,9 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
         try:
             if choice not in self.UPSCALERS:
                 return {"status": "error", "message": f"Unknown upscaler {choice}"}
+            if (choice == "fsr4lite" and self._load_state()["games"].get(str(appid), {}).get("signed_optiscaler")
+                    and not self._signed_core_has_lite(self._load_state()["games"].get(str(appid), {}))):
+                return {"status": "error", "message": "FSR 4 Lite needs OptiScaler 0.10 Nightly. Select it in OptiScaler version for this game first."}
             game = self._game(str(appid))
             if not game:
                 return {"status": "error", "message": "The game is not in the Steam library."}
@@ -1931,18 +1983,19 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
     async def refresh_fsr4_dlls(self) -> dict:
         try:
             done = []
-            for appid, entry in self._load_state().get("games", {}).items():
-                if entry.get("upscaler") not in ("fsr4", "fsr4lite"):
-                    continue
-                game = self._game(appid)
-                if not game or self._is_running(game):
-                    continue
-                target = self._resolve_target(game, entry)
-                if target:
-                    r = await asyncio.to_thread(self._apply_upscaler, appid, target, entry["upscaler"],
-                                                bool(entry.get("upscaler_watermark")))
-                    if r.get("status") == "success":
-                        done.append(entry.get("name", appid))
+            async with self._generator_lock():
+                for appid, entry in self._load_state().get("games", {}).items():
+                    if entry.get("upscaler") not in ("fsr4", "fsr4lite"):
+                        continue
+                    game = await asyncio.to_thread(self._game, appid)
+                    if not game or self._is_running(game):
+                        continue
+                    target = self._resolve_target(game, entry)
+                    if target:
+                        r = await asyncio.to_thread(self._apply_upscaler, appid, target, entry["upscaler"],
+                                                    bool(entry.get("upscaler_watermark")))
+                        if r.get("status") == "success":
+                            done.append(entry.get("name", appid))
             return {"status": "success", "message": f"FSR 4 DLL refreshed: {', '.join(done) or 'no closed games to update'}."}
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
@@ -1962,6 +2015,18 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             state = self._load_state()
             entry = state["games"].get(appid)
             patched = bool(entry and self._resolve_target(game, entry))
+
+            async def ls_core(r: dict) -> dict:
+                # The generator is already lsfg/off: now the Lite-capable core may be installed.
+                if r.get("status") == "success" and patched:
+                    try:
+                        async with self._generator_lock():
+                            r["message"] = (r.get("message", "") + await asyncio.to_thread(
+                                self._switch_core_for_generator, appid, choice)).strip()
+                    except Exception as exc:
+                        r = {"status": "error", "message": f"Frame generator changed, but the OptiScaler core for it could not be installed: {exc}"}
+                return r
+
             if choice == "lsfg":
                 r = await self.set_lsfg_profile(appid, True, multiplier, flow_scale, performance_mode)
                 if r.get("status") != "success":
@@ -1973,13 +2038,18 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
                     state = self._load_state()
                     state["games"][appid]["generator"] = "lsfg"
                     self._save_state(state)
-                return r
+                return await ls_core(r)
             if choice in ("anr", "xefg"):
                 if not patched:
                     return {"status": "error", "message": "Install ANR first: ANR FG and XeFG run through its OptiScaler."}
                 was = (self._load_state()["games"].get(appid) or {}).get("generator")
+                # ANR FG / XeFG need their own core: swap it in before the generator is set.
+                async with self._generator_lock():
+                    note = await asyncio.to_thread(self._switch_core_for_generator, appid, choice)
                 await self.set_lsfg_profile(appid, False)
                 r = await self.set_frame_generator(appid, choice)
+                if r.get("status") == "success":
+                    r["message"] = (r.get("message", "") + note).strip()
                 if r.get("status") == "success" and was in ("lsfg", "off"):
                     r["message"] = (r.get("message", "") + " Turn the game's DLSS Frame Generation back on "
                                     "in its graphics settings: ANR FG and XeFG replace it.").strip()
@@ -1992,7 +2062,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
                     state = self._load_state()
                     state["games"][appid]["generator"] = "off"
                     self._save_state(state)
-                return {"status": "success", "message": "Frame generation off for this game."}
+                return await ls_core({"status": "success", "message": "Frame generation off for this game."})
             return {"status": "error", "message": f"Unknown generator {choice}"}
         except Exception as exc:
             decky.logger.error(f"[ANR] set_generator_mode {appid} {choice}: {exc}")
@@ -2006,19 +2076,23 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             if entry.get("upscaler") == "fsr4lite":
                 src = lite_src
             signed = bool(entry.get("signed_optiscaler"))
-            if signed:
+            signed_lite = self._signed_core_has_lite(entry)
+            choice = entry.get("upscaler", "package")
+            if signed and not (signed_lite and choice == "fsr4lite"):
                 src = {"path": "", "version": "SDK", "own_prefix": False, "source": "official OptiScaler 0.9.4"}
+                if choice == "fsr4lite":
+                    choice = "fsr4"  # what the signed core actually runs
             out = await asyncio.to_thread(self._output_size, str(appid))
-            return {"status": "success", "signed_sdk": signed, "choice": entry.get("upscaler", "package"),
+            return {"status": "success", "signed_sdk": signed and not (signed_lite and choice == "fsr4lite"), "choice": choice,
                     "render_quality": entry.get("render_quality", "game"),
                     "render_options": [{"value": k, "label": v[0], "ratio": v[1]}
                                        for k, v in self.RENDER_QUALITY.items()],
                     "output": list(out) if out else None,
                     "watermark": bool(entry.get("upscaler_watermark")),
-                    "fsr4_lite_available": bool(lite_src) or signed, "fsr4_source": src, "rdna4": self._gpu_is_rdna4(), "gpu_family": self._gpu_family(),
+                    "fsr4_lite_available": bool(lite_src) and (not signed or signed_lite), "fsr4_source": src, "rdna4": self._gpu_is_rdna4(), "gpu_family": self._gpu_family(),
                     "proton_experimental": self._proton_experimental_installed(),
-                    "options": [{"value": k, "label": "FSR 4 INT8 (official SDK)" if signed and k == "fsr4lite" else v}
-                                for k, v in self.UPSCALERS.items()]}
+                    "options": [{"value": k, "label": "FSR 4 INT8 (official SDK)" if signed and k == "fsr4" else v}
+                                for k, v in self.UPSCALERS.items() if not (signed and not signed_lite and k == "fsr4lite")]}
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
 
@@ -2082,6 +2156,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
         "sharpness_override": ("Sharpness", "OverrideSharpness", "bool", None),
         "sharpness": ("Sharpness", "Sharpness", "float", (0.0, 1.3)),
         "show_fps": ("Menu", "ShowFps", "bool", None),
+        "dxgi_spoofing": ("Spoofing", "Dxgi", "bool", None),
     }
 
     def _read_ini_sections(self, ini: Path) -> dict[tuple[str, str], str]:
@@ -2162,6 +2237,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
                 return {"status": "error", "message": f"Unknown setting {key}"}
             game = self._game(appid)
             running = bool(game and self._is_running(game))
+            if key == "dxgi_spoofing" and running:
+                return {"status": "error", "message": "Close the game first."}
             val = self._normalize_opti(key, value)
             changes = {key: val}
             # Settings that work against each other: the newest choice wins, the other is turned off.

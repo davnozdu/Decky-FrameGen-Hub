@@ -64,6 +64,31 @@ class ExternalGames(unittest.TestCase):
         self.assertEqual(live[0]["LaunchOptions"], options)
         self.assertFalse(self.shortcut.exists())
 
+    def test_real_product_db_layout_maps_shortcut_name_via_uid(self):
+        # Real product.db: uid "fenris", product_code "Fen"; no --exec in the options.
+        from test_battlenet_database import field
+        prefix = self.root / "prefix"
+        db = prefix/"pfx/drive_c/ProgramData/Battle.net/Agent/product.db"
+        db.parent.mkdir(parents=True)
+        game = prefix/"pfx/drive_c/Program Files (x86)/Diablo IV"
+        game.mkdir(parents=True)
+        record = field(1, "fenris") + field(2, "Fen") + field(3, field(1, "C:/Program Files (x86)/Diablo IV")) \
+            + field(4, field(1, field(1, 1) + field(2, 1)))
+        db.write_bytes(field(1, record))
+        launcher = prefix/"pfx/drive_c/Program Files (x86)/Battle.net/Battle.net Launcher.exe"
+        launcher.parent.mkdir(parents=True); launcher.touch()
+        live = [{"appid": 777, "appname": "Diablo IV", "exe": f'"{launcher}"',
+                 "LaunchOptions": f'STEAM_COMPAT_DATA_PATH="{prefix}" %command%'}]
+        games = external_games([self.root], live_shortcuts=live)
+        self.assertEqual([g["install_path"] for g in games], [str(game.resolve())])
+
+    def test_live_shortcuts_are_not_reresolved_in_other_libraries(self):
+        other = self.root / "other-library"; other.mkdir()
+        live = [{"appid": 5, "appname": "My Game", "exe": f'"{self.game}/Game.exe"', "LaunchOptions": ""}]
+        games = external_games([self.root, other], live_shortcuts=live)
+        self.assertEqual(len(games), 1)
+        self.assertEqual(games[0]["prefix_path"], str(self.root / "steamapps/compatdata/5"))
+
     def test_missing_executable_is_not_offered(self):
         self.save('"/missing/game.exe"')
         self.assertEqual(external_games([self.root]), [])

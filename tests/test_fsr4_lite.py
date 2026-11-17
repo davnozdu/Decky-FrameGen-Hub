@@ -31,6 +31,25 @@ class Fsr4Lite(unittest.TestCase):
         self.assertEqual(self.p._apply_upscaler("1", self.game, "fsr31", False)["status"], "success")
         self.assertFalse(any((self.game / "OptiScaler" / n).exists() for n in self.hashes))
 
+    def test_users_own_amd_dll_is_not_claimed_by_standard_fsr4(self):
+        user = self.game / "OptiScaler/amdxcffx64.dll"
+        user.write_bytes(b"user AMD dll")
+        info = {"path": str(user), "version": "1.0.0.1"}
+        self.p._fsr4_dll_info = lambda path: dict(info) if Path(path).exists() else None
+        self.p._find_fsr4_dll = lambda appid: {"path": str(self.sources / self.p.FSR4_DLL), "version": "9.0.0.0", "source": "test"}
+        self.p._gpu_family = lambda: "rdna3"
+        self.assertEqual(self.p._apply_upscaler("1", self.game, "fsr4", False)["status"], "success")
+        self.assertEqual(user.read_bytes(), b"user AMD dll")
+        self.assertEqual(self.p._apply_upscaler("1", self.game, "fsr31", False)["status"], "success")
+        self.assertEqual(user.read_bytes(), b"user AMD dll")
+
+    def test_running_detection_matches_wine_c_drive_paths(self):
+        p = fixtures.backend.Plugin()
+        exe = Path("/home/u/.local/share/Steam/steamapps/compatdata/NSL/pfx/drive_c/Program Files (x86)/Diablo IV/Diablo IV.exe")
+        ps = type("R", (), {"stdout": "C:\\Program Files (x86)\\Diablo IV\\Diablo IV.exe -launch\n"})()
+        with patch.object(fixtures.backend.subprocess, "run", return_value=ps):
+            self.assertEqual(p._running_exe([exe]), exe)
+
     def test_foreign_second_dll_prevents_any_write(self):
         dll = self.game / "OptiScaler/amdvkffx64.dll"
         dll.write_bytes(b"user file")

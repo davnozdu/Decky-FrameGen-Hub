@@ -90,4 +90,4 @@ class Imports(unittest.TestCase):
         result = asyncio.run(self.p.import_fsr4_libraries(str(self.archive)))
         self.assertEqual(result['updated_games'], ['Test game'])
         self.assertEqual(self.p._read_ini_sections(self.ini)[('FSR', 'Fsr4Model')], '3')
-        self.assertEqual(self.p._read_ini_sections(self.ini)[('FSR', 'Fsr4EnableWatermark')], 'false')
+        self.assertEqual(self.p._read_ini_sections(self.ini)[('FSR', 'Fsr4EnableWatermark')], 'auto')

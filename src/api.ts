@@ -31,6 +31,11 @@ export type GameStatus = Result & {
   dxgi_fix_enabled?: boolean;
   dxgi_fix_available?: boolean;
   signed_optiscaler?: boolean;
+  optiscaler_core?: "package" | "signed" | "signed095" | "nightly";
+  signed095_available?: boolean;
+  optiscaler_cores?: { fg: string; ls: string };
+  requires_signed_core?: boolean;
+  fg_available?: boolean;
   target_dir?: string;
   target_rel?: string;
   game_version?: string | null;
@@ -54,6 +59,8 @@ export const updateFromGithub = callable<[], Result & { version?: string }>("upd
 export const setActiveVersion = callable<[version: string], Result>("set_active_version");
 export const syncShortcuts = callable<[shortcuts: import("./steam").LiveShortcut[]], Result>("sync_shortcuts");
 export const listGames = callable<[], Result & { games: GameEntry[] }>("list_games");
+export const updateNightlyOptiscaler = callable<[appid: string], Result>("update_nightly_optiscaler");
+export const setOptiscalerCore = callable<[appid: string, core: string, current: string], PatchResult>("set_optiscaler_core");
 export const setSignedOptiscaler = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_signed_optiscaler");
 export const setDxgiFix = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_dxgi_fix");
 export const recommendedLaunchOptions = callable<[appid: string, current: string], PatchResult>("recommended_launch_options");

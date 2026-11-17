@@ -47,18 +47,23 @@ def decode_products(data):
     if len(data) > MAX_DB_SIZE:
         raise ValueError("Battle.net product.db is too large")
     products = []
-    for number, wire, value in _fields(data):
+    # The outer record list must be intact; one damaged product record is skipped
+    # so that the remaining installed games are still found.
+    for number, wire, value in list(_fields(data)):
         if number != 1 or wire != 2:
             continue
-        product = {n: v for n, w, v in _fields(value) if w == 2}
-        settings = {n: v for n, w, v in _fields(product.get(3, b"")) if w == 2}
-        cached = {n: v for n, w, v in _fields(product.get(4, b"")) if w == 2}
-        state = {n: v for n, w, v in _fields(cached.get(1, b"")) if w == 0}
-        if not (state.get(1) or state.get(2)):
+        try:
+            product = {n: v for n, w, v in _fields(value) if w == 2}
+            settings = {n: v for n, w, v in _fields(product.get(3, b"")) if w == 2}
+            cached = {n: v for n, w, v in _fields(product.get(4, b"")) if w == 2}
+            state = {n: v for n, w, v in _fields(cached.get(1, b"")) if w == 0}
+            if not (state.get(1) or state.get(2)):
+                continue
+            path = settings.get(1, b"").decode("utf-8")
+            code = product.get(2, product.get(1, b"")).decode("utf-8")
+            uid = product.get(1, b"").decode("utf-8")
+        except ValueError:  # includes UnicodeDecodeError
             continue
-        path = settings.get(1, b"").decode("utf-8")
-        code = product.get(2, product.get(1, b"")).decode("utf-8")
-        uid = product.get(1, b"").decode("utf-8")
         if path and code:
             products.append({"code": code, "uid": uid, "windows_path": path})
     return products

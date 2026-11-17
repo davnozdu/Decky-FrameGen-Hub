@@ -2,7 +2,6 @@
 from __future__ import annotations
 import argparse
 import hashlib
-import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -72,9 +71,12 @@ def extract_driver(driver: Path, output_dir: Path, cache: Path, sevenzip: str | 
     if not driver.is_file() or driver.suffix.lower() != ".exe":
         raise ValueError("Select the downloaded AMD Windows driver .exe")
     tool = find_7zip(cache, sevenzip)
+    # Decky's bundled libraries must not be loaded by the host's 7-Zip.
+    env = dict(os.environ)
+    env.pop("LD_LIBRARY_PATH", None)
     print("Reading driver archive…", flush=True)
     result = subprocess.run([tool, "l", "-slt", "-sccUTF-8", "-r", str(driver), "*ffx64.dll"],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180, env=env)
     if result.returncode:
         raise ValueError("7-Zip cannot read this driver: " + result.stderr[-1000:])
     groups = {}
@@ -100,7 +102,7 @@ def extract_driver(driver: Path, output_dir: Path, cache: Path, sevenzip: str | 
             target.mkdir(exist_ok=True)
             print("Extracting only the two FSR libraries…", flush=True)
             result = subprocess.run([tool, "e", "-y", "-o" + str(target), str(driver), *files.values()],
-                                    capture_output=True, text=True, errors="replace", timeout=600)
+                                    capture_output=True, text=True, errors="replace", timeout=600, env=env)
             if result.returncode:
                 raise ValueError("7-Zip extraction failed: " + result.stderr[-1000:])
             payload = {p.name.lower(): p.read_bytes() for p in target.iterdir() if p.is_file() and p.name.lower() in DLL_NAMES}
@@ -132,7 +134,7 @@ def extract_driver(driver: Path, output_dir: Path, cache: Path, sevenzip: str | 
                 for name in DLL_NAMES:
                     z.writestr(name, payload[name])
                 z.writestr("manifest.json", json.dumps(manifest, indent=2))
-                z.writestr("README.txt", "Extracted locally from your AMD Windows driver. Import this ZIP in Decky FrameGen Hub. AMD libraries retain AMD terms; this archive is not part of the plugin release.\\n")
+                z.writestr("README.txt", "Extracted locally from your AMD Windows driver. Import this ZIP in Decky FrameGen Hub. AMD libraries retain AMD terms; this archive is not part of the plugin release.\n")
             os.replace(staged, dest)
             print("Ready: " + str(dest), flush=True)
             return dest

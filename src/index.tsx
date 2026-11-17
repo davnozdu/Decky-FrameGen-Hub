@@ -42,7 +42,8 @@ import {
   listGames,
   recommendedLaunchOptions,
   setDxgiFix,
-  setSignedOptiscaler,
+  setOptiscalerCore,
+  updateNightlyOptiscaler,
   syncShortcuts,
   listOutdatedGames,
   patchGame,
@@ -491,14 +492,25 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     return r;
   };
 
-  const changeSignedOptiscaler = withSettingFocus(async (enabled: boolean) => {
+  const changeOptiscalerCore = withSettingFocus(async (core: string) => {
     if (busy !== null) return;
     const id = appid;
     setBusy("compat");
     try {
       const current = await getLaunchOptions(Number(id));
-      const result = await setSignedOptiscaler(id, enabled, current);
+      const result = await setOptiscalerCore(id, core, current);
       if (result.status === "success" && result.launch_options !== undefined) setLaunchOptions(Number(id), result.launch_options);
+      toast(result.message || result.status);
+    } catch (error) { toast(errorText(error)); }
+    finally { setBusy(null); await loadStatus(id, true); }
+  });
+
+  const updateOptiscaler = withSettingFocus(async () => {
+    if (busy !== null) return;
+    const id = appid;
+    setBusy("compat");
+    try {
+      const result = await updateNightlyOptiscaler(id);
       toast(result.message || result.status);
     } catch (error) { toast(errorText(error)); }
     finally { setBusy(null); await loadStatus(id, true); }
@@ -902,8 +914,8 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   disabled={busy !== null || status?.running}
                   selectedOption={status?.generator?.choice || "anr"}
                   rgOptions={[
-                    { data: "anr", label: "ANR FG" },
-                    ...(status?.generator?.available !== false ? [{ data: "xefg", label: t("XeFG XMX Port · Build 10 (beta)") }] : []),
+                    ...(status?.fg_available !== false ? [{ data: "anr", label: "ANR FG" }] : []),
+                    ...(status?.fg_available !== false && status?.generator?.available !== false ? [{ data: "xefg", label: t("XeFG XMX Port · Build 10 (beta)") }] : []),
                     { data: "lsfg", label: "Lossless Scaling (lsfg-vk)" },
                     { data: "off", label: "Off" },
                     ...(status?.generator?.choice === "custom" ? [{ data: "custom", label: status.generator.provider }] : []),
@@ -924,13 +936,39 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               <PanelSectionRow><div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.07em", opacity: 0.65, marginTop: "14px" }}>{t("3 · Compatibility")}</div></PanelSectionRow>
               {status?.mode === "full" && (
                 <PanelSectionRow>
-                  <ToggleField label={t("Fix DXGI loading (signed OptiScaler)")}
+                  <DropdownItem label={t("OptiScaler version")}
                     description={busy === "compat"
-                      ? t("Preparing compatibility fix… The first download is about 55 MB.")
-                      : t("For this game only. Uses the official signed loader for games that reject unsigned DLLs. Keeps FSR 4 and your frame generator. Switch off to restore the previous loader.")}
-                    checked={Boolean(status.signed_optiscaler)}
+                      ? t("Preparing OptiScaler… The first download may take a few minutes.")
+                      : ["lsfg", "off"].includes(genChoice)
+                      ? t("Core for Lossless Scaling and no frame generation. Remembered separately from the ANR FG / XeFG core and swapped automatically when you change the frame generator. FSR 4 Lite: 0.9.5-pre5 (signed) or 0.10 Nightly.")
+                      : t("Core for ANR FG and XeFG. Remembered separately from the Lossless Scaling core and swapped automatically when you change the frame generator. The Lite cores do not support ANR FG / XeFG.")}
+                    selectedOption={status.optiscaler_core || (status.signed_optiscaler ? "signed" : "package")}
+                    rgOptions={[
+                      { data: "package", label: t("ANR package (original)") },
+                      { data: "signed", label: t("OptiScaler 0.9.4 (signed)") },
+                      ...(status.signed095_available && ["lsfg", "off"].includes(genChoice) ? [{ data: "signed095", label: t("OptiScaler 0.9.5-pre5 (signed, Lite test)") }] : []),
+                      ...(["lsfg", "off"].includes(genChoice) && (!status.requires_signed_core || status.optiscaler_core === "nightly") ? [{ data: "nightly", label: t("OptiScaler 0.10 Nightly (FSR 4 Lite)") }] : []),
+                    ]}
                     disabled={Boolean(status.running) || busy !== null}
-                    onChange={(enabled: boolean) => void changeSignedOptiscaler(enabled)} />
+                    onChange={(o) => void changeOptiscalerCore(String(o.data))} />
+                </PanelSectionRow>
+              )}
+              {status?.mode === "full" && (
+                <PanelSectionRow>
+                  <ToggleField label={t("Fix DXGI (10DD hook error)")}
+                    description={t("Disables global GPU spoofing for this game. Keeps the selected OptiScaler core, FSR 4 Lite and frame generator. Restart to test; if DLSS disappears, switch this fix off.")}
+                    checked={opti.dxgi_spoofing === "false"}
+                    disabled={Boolean(status.running) || busy !== null}
+                    onChange={(enabled: boolean) => void changeOpti("dxgi_spoofing", enabled ? "false" : "auto")} />
+                </PanelSectionRow>
+              )}
+              {status?.optiscaler_core === "nightly" && (
+                <PanelSectionRow>
+                  <ButtonItem layout="below" disabled={Boolean(status.running) || busy !== null}
+                    onClick={() => void updateOptiscaler()}>
+                    {t("Update OptiScaler")}
+                  </ButtonItem>
+                  <div style={small}>{t("Updates only this game's Nightly core. The plugin and other games stay on their current versions.")}</div>
                 </PanelSectionRow>
               )}
           {patched && (

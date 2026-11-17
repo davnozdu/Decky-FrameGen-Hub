@@ -88,6 +88,37 @@ class SignedOpti(unittest.TestCase):
         self.assertIn('Fsr4EnableWatermark=auto',self.ini.read_text())
         self.assertNotIn('Fsr4EnableWatermark=false',self.ini.read_text())
 
+    def test_signed_mode_clears_stale_lite_keys(self):
+        self.p._set_ini_sections(self.ini, {('FSR','Fsr4GpuSupport'):'4', ('FSR','Fsr4Model'):'3'})
+        self.p._set_signed_optiscaler('1', True)
+        self.p._apply_upscaler('1',self.game,'fsr4',False)
+        text=self.ini.read_text()
+        self.assertIn('Fsr4GpuSupport=auto',text); self.assertIn('Fsr4Model=auto',text)
+
+    def test_signed_core_never_claims_lite(self):
+        # Fixture game starts with upscaler=fsr4lite; enabling the signed core re-applies it.
+        self.p._set_signed_optiscaler('1', True)
+        self.assertIn('Fsr4ForceEnableInt8=true',self.ini.read_text())
+        self.assertIn('UpscalerIndex=0',self.ini.read_text())
+        result=self.p._apply_upscaler('1',self.game,'fsr4lite',False)
+        self.assertIn('Lite is not available',result['message'])
+        # The Lite preference survives so that turning the signed fix off restores it.
+        self.assertEqual(self.p._load_state()['games']['1']['upscaler'],'fsr4lite')
+        self.p._gpu_is_rdna4=lambda:True
+        self.p._apply_upscaler('1',self.game,'fsr4',False)
+        self.assertIn('Fsr4ForceEnableInt8=false',self.ini.read_text())
+
+    def test_signed_ui_hides_lite_and_rejects_selecting_it(self):
+        import asyncio
+        self.p._set_signed_optiscaler('1', True)
+        self.p._find_fsr4_dll=lambda appid:None; self.p._output_size=lambda appid:None
+        self.p._gpu_family=lambda:'rdna3'; self.p._proton_experimental_installed=lambda:False
+        info=asyncio.run(self.p.get_upscaler('1'))
+        self.assertEqual(info['choice'],'fsr4'); self.assertFalse(info['fsr4_lite_available'])
+        self.assertNotIn('fsr4lite',[o['value'] for o in info['options']])
+        result=asyncio.run(self.p.set_upscaler('1','fsr4lite'))
+        self.assertEqual(result['status'],'error'); self.assertIn('0.10 Nightly',result['message'])
+
     def test_sdk_foreign_file_is_preserved(self):
         folder=self.game/'OptiScaler/OfficialFSR4';folder.mkdir()
         foreign=folder/'amd_fidelityfx_upscaler_dx12.dll';foreign.write_bytes(b'user SDK')

@@ -46,6 +46,12 @@ class BattleNetDatabase(unittest.TestCase):
             self.assertEqual(parsed[0]["install_path"], str(target.resolve()))
             self.assertEqual(wine_path("Z:"+str(target), prefix), target)
 
+    def test_damaged_product_record_does_not_hide_other_games(self):
+        bad = field(1, field(1, "x") + field(3, b"\xff\xfe") + field(4, field(1, field(1, 1))))
+        bad_utf8 = field(1, field(1, "y") + field(2, "y") + field(3, field(1, b"\xff")) + field(4, field(1, field(1, 1))))
+        parsed = decode_products(bad + bad_utf8 + product())
+        self.assertEqual([p["code"] for p in parsed], ["fenris"])
+
     def test_truncated_database_fails_without_guessing_paths(self):
         for data in (b"\x0a\x80", b"\x0a\x05abc", b"\x00"):
             with self.assertRaises(ValueError): decode_products(data)

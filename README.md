@@ -99,7 +99,7 @@ Alternatively, **Import libraries from ZIP** accepts both DLLs together (nested 
 unsafe ZIP paths and files without Lite markers are rejected. Importing a newer pair uses the same buttons;
 there is no fixed DLL hash/version whitelist. Your library survives plugin updates.
 
-After importing, choose a game → **Upscaler → FSR 4 Lite (INT8)**. Games already using Lite update automatically
+After importing, choose a game, select **Lossless Scaling** or **Off** for frame generation, then **OptiScaler version → OptiScaler 0.10 Nightly** and **Upscaler → FSR 4 Lite (INT8)**. Games already using Lite update automatically
 when closed; running games are skipped until closed and Lite is selected again. Existing frame generator,
 quality and sharpening choices are preserved. Only unchanged plugin-managed DLLs are replaced/removed.
 A new game's upscaler is not switched automatically.
@@ -250,6 +250,12 @@ OptiScaler (inside the ANR FG full package) is GPL-3.0; the source of the bundle
 
 Per-game compatibility: an opt-in signed OptiScaler core from the official v0.9.4 archive (pinned SHA-256) can replace a managed loader, preserving the upscaler and frame generator. The previous core is backed up for rollback. Other game profiles remain unchanged. An independent LSFG-only bypass is available under Advanced settings and is ineligible when OptiScaler features are selected.
 
-With the signed core, FSR 4 uses signed SDK libraries from the same pinned official archive, with INT8 forced on non-RDNA4 GPUs. ANR libraries and other game profiles remain unchanged. DLSS in the game is the input to OptiScaler; verify the actual FSR 4 output using its watermark or log after launch.
+With the signed core, FSR 4 uses signed SDK libraries from the same pinned official archive, with INT8 forced on non-RDNA4 GPUs. **FSR 4 Lite is not available with the signed core**: OptiScaler 0.9.4 has no model selection (`Fsr4Model`) and never loads `amdvkffx64.dll`, so it runs the standard INT8 model (watermark `FSR 4 i8`, not `FSR4L-i8`). For Lite choose **OptiScaler version → OptiScaler 0.10 Nightly**. Nightly is mutually exclusive with ANR FG and XeFG: select Lossless Scaling or disable frame generation first. The plugin hides Lite with the signed 0.9.4 core. **Update OptiScaler** updates only the selected game’s nightly core without updating the plugin; publisher SHA-256 is required. Switching to **ANR package (original)** restores the backed-up original loader. proton-cachyos always provides its own `amdxcffx64.dll` (FSR 4.1.1, driver library 2.3.0.2913, no Lite model) in `system32`. ANR libraries and other game profiles remain unchanged. DLSS in the game is the input to OptiScaler; verify the actual FSR 4 output using its watermark or log after launch.
 
 With the signed SDK, the disabled watermark uses `Fsr4EnableWatermark=auto`. The SDK checks whether `MLSR-WATERMARK` exists; OptiScaler 0.9.4 sets it to `0` for false, which still draws the watermark. Restart the game to remove an existing watermark.
+
+Diablo IV: the November 15 Nightly is unsigned. A locally signed v10 reached gameplay with the FSR4L-i8 watermark, but a startup error dialog remained. The signature alone does not establish that dialog's cause. Disabling global DXGI spoofing removed Detours error 10DD but also disabled the DLSS input and Lite in this game; leave that experimental toggle off.
+
+A verified official signed 0.9.5-pre5 artifact can be installed in the runtime cache (GitHub Actions run 43116305456, artifact 13898752558). The plugin then offers it as a separate test core. Its driver Lite model uses Fsr4ForceEnableInt8=3, not v10's model keys. The artifact is not bundled in public plugin ZIPs. This stable-branch core lacks the custom ANR/XeFG provider interface; those combinations remain blocked.
+
+Verified November 16, 2026 in Diablo IV on Radeon 890M: signed 0.9.5 with an explicit OptiDllPath loads imported driver library 2.4.0.4370 and lists FSR 4.1.2. The user confirmed the FSR4L-i8 watermark and no startup error dialog. Lossless Scaling was preserved. Without the explicit path, 0.9.5 loaded an older system32 library and standard FSR 4.

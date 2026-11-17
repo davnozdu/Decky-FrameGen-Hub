@@ -11,14 +11,17 @@ from battlenet_db import installed_products, wine_path
 def launcher_installs(prefix):
     """Names and actual install folders for launcher-mediated game shortcuts."""
     installs = {}
+    # Keyed by product.db uid; product_code ("Fen", "Pro", ...) is added separately.
     aliases = {"fenris": ("fen", "diablo iv"), "prometheus": ("pro", "overwatch", "overwatch 2"),
                "diablo3": ("d3", "diablo iii"), "hs_beta": ("wtcg", "hearthstone"),
-               "wow": ("world of warcraft",), "hero": ("heroes of the storm",)}
+               "wow": ("world of warcraft",), "heroes": ("hero", "heroes of the storm"),
+               "hero": ("heroes of the storm",)}
     for product in installed_products(prefix):
         code = product["code"].casefold()
-        if code in ("agent", "bna", "battle.net"):
+        uid = product["uid"].casefold()
+        if code in ("agent", "bna", "battle.net") or uid in ("agent", "battle.net"):
             continue
-        for key in (code, product["uid"].casefold(), *aliases.get(code, ())):
+        for key in (code, uid, *aliases.get(uid, ()), *aliases.get(code, ())):
             installs[key] = Path(product["install_path"])
 
     drive = prefix / "pfx/drive_c"
@@ -45,6 +48,7 @@ def launcher_installs(prefix):
 def external_games(libraries, appid=None, live_shortcuts=None):
     games = {}
     cache = {}
+    live_pending = True
     for library in libraries:
         by_id = {}
         for file in (Path(library) / "userdata").glob("*/config/shortcuts.vdf"):
@@ -53,12 +57,16 @@ def external_games(libraries, appid=None, live_shortcuts=None):
                     by_id[str(int(entry.get("appid", 0)) & 0xffffffff)] = entry
             except (OSError, ValueError, SyntaxError):
                 continue
-        for entry in live_shortcuts or []:
-            by_id[str(int(entry.get("appid", 0)) & 0xffffffff)] = entry
+        # Live shortcuts belong to the Steam root (the first library); applying them
+        # to every library would resolve default prefixes against the wrong compatdata.
+        if live_pending:
+            live_pending = False
+            for entry in live_shortcuts or []:
+                by_id[str(int(entry.get("appid", 0)) & 0xffffffff)] = entry
         for shortcut in by_id.values():
             try:
                 sid = str(int(shortcut.get("appid", 0)) & 0xffffffff)
-                if sid == "0" or (appid is not None and sid != str(appid)):
+                if sid == "0" or sid in games or (appid is not None and sid != str(appid)):
                     continue
                 name = shortcut.get("appname") or shortcut.get("AppName") or ""
                 options = shortcut.get("LaunchOptions", "")
