@@ -501,5 +501,11 @@
   "OptiScaler is not needed for this setup.": "OptiScaler для этой настройки не нужен.",
   "Restart the game.": "Перезапустите игру.",
   "Game TAA → NPU 1080p": "TAA игры → NPU 1080p",
-  "{0} → NPU 1080p": "{0} → NPU 1080p"
+  "{0} → NPU 1080p": "{0} → NPU 1080p",
+  "NPU 720p → 1080p (Ryzen AI)": "NPU 720p → 1080p (Ryzen AI)",
+  "FSR 4 Lite → NPU 1080p": "FSR 4 Lite → NPU 1080p",
+  "Upscaler: NPU 720p → 1080p": "Апскейлер: NPU 720p → 1080p",
+  "The game renders 1280×720 with its own TAA; the Ryzen AI NPU upscales to 1080p without using the GPU. Turn DLSS/FSR off in the game.": "Игра рисует 1280×720 со своим TAA, NPU Ryzen AI поднимает до 1080p, не нагружая GPU. Выключите DLSS/FSR в игре.",
+  "FSR 4 Lite on the GPU, then the NPU to 1080p. FSR 4 costs GPU time: best at 25 W and above.": "FSR 4 Lite на GPU, затем NPU до 1080p. FSR 4 тратит время GPU: лучше от 25 Вт.",
+  "Choose \"NPU 720p → 1080p\" in Upscaler below.": "Выберите «NPU 720p → 1080p» в «Апскейлере» ниже."
 }

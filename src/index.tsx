@@ -613,6 +613,29 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     await loadStatus(appid, true);
   });
 
+  // Upscaler dropdown with the NPU folded in: "npu" = OptiScaler off + NPU, "fsr4lite_npu" = FSR 4 Lite + NPU.
+  const changeUpscalerChoice = withSettingFocus(async (choice: string, watermark: boolean) => {
+    if (busy !== null) return;
+    const npuWanted = choice === "npu" || choice === "fsr4lite_npu";
+    const optiChoice = choice === "npu" ? "off" : choice === "fsr4lite_npu" ? "fsr4lite" : choice;
+    try {
+      const r = await setUpscaler(appid, optiChoice, watermark);
+      if (r.status === "success") await syncLaunchMode(appid);
+      let msg = r.message || r.status;
+      if (r.status === "success" && npu?.available && Boolean(npu.enabled) !== npuWanted) {
+        const current = await getLaunchOptions(Number(appid));
+        const n = await setNpuSr(appid, npuWanted, current);
+        if (n.status === "success" && n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
+        msg = `${msg} ${n.message || ""}`.trim();
+      }
+      toast(msg);
+    } catch (e) {
+      toast(errorText(e));
+    }
+    await loadStatus(appid, true);
+    await loadNpu(appid);
+  });
+
   const changeOpti = withSettingFocus(async (key: string, value: string) => {
     if (busy !== null) return;
     const before = opti[key];
@@ -785,18 +808,23 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           {npu && (
             <>
               <PanelSectionRow>
-                <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU upscaling (Ryzen AI)")}</div>
+                <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU 720p → 1080p (Ryzen AI)")}</div>
               </PanelSectionRow>
-              <PanelSectionRow>
-                <ToggleField label={t("Upscale 720p → 1080p on the NPU")}
+              {!upscaler?.options && <PanelSectionRow>
+                <ToggleField label={t("Upscaler: NPU 720p → 1080p")}
                   description={npu.available
                     ? t("Set the game to 1280×720. The NPU restores detail while the GPU renders the game. With FSR 4, pick a render quality for 720p output. Applies on the next game start.")
                     : t("Not installed on this device: {0}.", (npu.missing ?? []).map((m) => t(m)).join(", "))}
                   checked={Boolean(npu.enabled)}
                   disabled={!npu.available && !npu.enabled}
                   onChange={(enabled: boolean) => void changeNpu(enabled)} />
-              </PanelSectionRow>
-              {npu.available && (npu.models?.length ?? 0) > 0 && (
+              </PanelSectionRow>}
+              {upscaler?.options && !npu.enabled && (
+                <PanelSectionRow><div style={small}>{npu.available
+                  ? t("Choose \"NPU 720p → 1080p\" in Upscaler below.")
+                  : t("Not installed on this device: {0}.", (npu.missing ?? []).map((m) => t(m)).join(", "))}</div></PanelSectionRow>
+              )}
+              {npu.available && npu.enabled && (npu.models?.length ?? 0) > 0 && (
                 <PanelSectionRow>
                   <DropdownItem
                     onMenuWillOpen={openMenuWithFocus}
@@ -896,7 +924,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           onMenuWillOpen={openMenuWithFocus}
                       label={t("Upscaler")}
                       description={
-                        upscaler.signed_sdk && ["fsr4", "fsr4lite"].includes(upscaler.choice || "")
+                        npu?.enabled && (!upscaler.choice || upscaler.choice === "off")
+                          ? t("The game renders 1280×720 with its own TAA; the Ryzen AI NPU upscales to 1080p without using the GPU. Turn DLSS/FSR off in the game.")
+                          : npu?.enabled && upscaler.choice === "fsr4lite"
+                          ? t("FSR 4 Lite on the GPU, then the NPU to 1080p. FSR 4 costs GPU time: best at 25 W and above.")
+                          : upscaler.signed_sdk && ["fsr4", "fsr4lite"].includes(upscaler.choice || "")
                           ? t("Official FSR 4 SDK with signed OptiScaler. DLSS in the game is the input; FSR 4 is the output. INT8 is enabled for this GPU when needed.")
                           : upscaler.choice === "fsr4lite"
                           ? t("INT8 Lite from your imported libraries. Enable the watermark to verify FSR4L-i8 after launch.")
@@ -908,16 +940,24 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                           ? t("OptiScaler's upscaler. On RDNA 2 (Steam Deck) FSR 3.1 is the fast choice.")
                           : t("OptiScaler's upscaler. The game's DLSS option drives it.")
                       }
-                      selectedOption={upscaler.choice || "package"}
-                      rgOptions={upscaler.options.map((o) => ({
-                        data: o.value,
-                        label:
-                          o.value === "fsr4lite" && !upscaler.fsr4_lite_available ? t("{0} (import ZIP first)", o.label)
-                          : o.value === "fsr4" && !upscaler.fsr4_source ? t("{0} (needs Proton Experimental)", o.label)
-                          : o.value === "fsr4" && upscaler.gpu_family === "rdna2" ? t("{0} · slow on this GPU", o.label)
-                          : o.label,
-                      }))}
-                      onChange={(o) => void changeUpscaler(String(o.data), Boolean(upscaler.watermark))}
+                      selectedOption={npu?.enabled
+                        ? (!upscaler.choice || upscaler.choice === "off" ? "npu" : upscaler.choice === "fsr4lite" ? "fsr4lite_npu" : upscaler.choice)
+                        : (upscaler.choice || "package")}
+                      rgOptions={(() => {
+                        const list = upscaler.options.map((o) => ({
+                          data: o.value,
+                          label:
+                            o.value === "fsr4lite" && !upscaler.fsr4_lite_available ? t("{0} (import ZIP first)", o.label)
+                            : o.value === "fsr4" && !upscaler.fsr4_source ? t("{0} (needs Proton Experimental)", o.label)
+                            : o.value === "fsr4" && upscaler.gpu_family === "rdna2" ? t("{0} · slow on this GPU", o.label)
+                            : o.label,
+                        }));
+                        if (!npu?.available) return list;
+                        const lite = list.findIndex((o) => o.data === "fsr4lite");
+                        if (lite >= 0) list.splice(lite + 1, 0, { data: "fsr4lite_npu", label: t("FSR 4 Lite → NPU 1080p") });
+                        return [{ data: "npu", label: t("NPU 720p → 1080p (Ryzen AI)") }, ...list];
+                      })()}
+                      onChange={(o) => void changeUpscalerChoice(String(o.data), Boolean(upscaler.watermark))}
                     />
                   </PanelSectionRow>
                   {upscaler.render_options && (
