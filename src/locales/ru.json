@@ -507,5 +507,11 @@
   "Upscaler: NPU 720p → 1080p": "Апскейлер: NPU 720p → 1080p",
   "The game renders 1280×720 with its own TAA; the Ryzen AI NPU upscales to 1080p without using the GPU. Turn DLSS/FSR off in the game.": "Игра рисует 1280×720 со своим TAA, NPU Ryzen AI поднимает до 1080p, не нагружая GPU. Выключите DLSS/FSR в игре.",
   "FSR 4 Lite on the GPU, then the NPU to 1080p. FSR 4 costs GPU time: best at 25 W and above.": "FSR 4 Lite на GPU, затем NPU до 1080p. FSR 4 тратит время GPU: лучше от 25 Вт.",
-  "Choose \"NPU 720p → 1080p\" in Upscaler below.": "Выберите «NPU 720p → 1080p» в «Апскейлере» ниже."
+  "Choose \"NPU 720p → 1080p\" in Upscaler below.": "Выберите «NPU 720p → 1080p» в «Апскейлере» ниже.",
+  "Re-copies OptiScaler and ANR FG files into this game (after a game update, or if something stopped working). Settings are kept.": "Заново копирует файлы OptiScaler и ANR FG в эту игру (после обновления игры или если что-то перестало работать). Настройки сохраняются.",
+  "Update / reinstall ANR FG in this game": "Обновить / переустановить ANR FG в этой игре",
+  "What to set in the game": "Что включить в самой игре",
+  "NPU: game resolution 1280×720 (if the game keeps 1920×1080, set Steam → game Properties → Game resolution 1280×720). DLSS/FSR off, TAA on.": "NPU: разрешение игры 1280×720 (если игра остаётся в 1920×1080 — Steam → Свойства игры → «Разрешение игры» 1280×720). DLSS/FSR выкл., TAA вкл.",
+  "LSFG: turn off the game's own frame generation.": "LSFG: выключите генерацию кадров в самой игре.",
+  "Frame generation: off.": "Генерация кадров: выключена."
 }

@@ -805,7 +805,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             </div>
           </PanelSectionRow>
 
-          {npu && (
+          {npu && !upscaler?.options && (
             <>
               <PanelSectionRow>
                 <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU 720p → 1080p (Ryzen AI)")}</div>
@@ -956,7 +956,19 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                       onChange={(o) => void changeUpscalerChoice(String(o.data), Boolean(upscaler.watermark))}
                     />
                   </PanelSectionRow>
-                  {upscaler.render_options && (
+                  {npu?.enabled && npu.available && (npu.models?.length ?? 0) > 0 && (
+                    <PanelSectionRow>
+                      <DropdownItem
+                        onMenuWillOpen={openMenuWithFocus}
+                        label={t("NPU model")}
+                        description={npu.models?.find((m) => m.file === npu.model)?.note || t("Shared by all NPU games. A running game switches in a few seconds.")}
+                        selectedOption={npu.model ?? ""}
+                        rgOptions={(npu.models ?? []).map((m) => ({ data: m.file, label: m.label }))}
+                        onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                    </PanelSectionRow>
+                  )}
+                  {npu?.enabled && npuLine && <PanelSectionRow><div style={small}>{npuLine}</div></PanelSectionRow>}
+                  {upscaler.render_options && !npu?.enabled && (
                     <PanelSectionRow>
                       <DropdownItem
           onMenuWillOpen={openMenuWithFocus}
@@ -1043,6 +1055,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 <LsfgControls profile={status?.lsfg || null} busy={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
                   onChange={(p) => void changeGenerator("lsfg", p)} />
               )}
+
               <PanelSectionRow><div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.07em", opacity: 0.65, marginTop: "14px" }}>{t("3 · Compatibility")}</div></PanelSectionRow>
               {status?.mode === "full" && (
                 <PanelSectionRow>
@@ -1084,9 +1097,13 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           {patched && (
             <PanelSectionRow>
               <div style={{ ...small, opacity: 1, padding: "10px 12px", borderRadius: "8px", background: "rgba(255,255,255,0.045)" }}>
-                <b>{t("For the next launch")}</b><br />
+                <b>{t("What to set in the game")}</b><br />
+                {npu?.enabled && (!upscaler?.choice || upscaler.choice === "off") && <>
+                  {t("NPU: game resolution 1280×720 (if the game keeps 1920×1080, set Steam → game Properties → Game resolution 1280×720). DLSS/FSR off, TAA on.")}<br /></>}
                 {genChoice === "lsfg"
-                  ? t("LSFG: turn off the game's own frame generation. Upscaling is configured separately below.")
+                  ? t("LSFG: turn off the game's own frame generation.")
+                  : genChoice === "off"
+                  ? t("Frame generation: off.")
                   : t("ANR / XeFG: enable DLSS Frame Generation in the game. The selected generator replaces it.")}
                 {game?.name === "Diablo IV" && <><br />{t("Battle.net: close an already-running client, then launch this game's Steam shortcut to apply its launch options.")}</>}
               </div>
@@ -1130,24 +1147,16 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 </ButtonItem>
               </PanelSectionRow>
               {showAdvanced && <>
-              {patched && !outdated && <>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              disabled={!info?.installed || busy !== null || generatorSaving || loadingStatus || status?.running}
-              onClick={doPatch}
-            >
-              {busy === "patch"
-                ? t("Installing…")
-                : patched
-                ? outdated
-                  ? t("Update to {0}", status?.active_version)
-                  : t("Reinstall ANR FG")
-                : t("Install ANR FG")}
-            </ButtonItem>
-          </PanelSectionRow>
-
-              </>}
+              {patched && !outdated && (
+                <PanelSectionRow>
+                  <ButtonItem layout="below"
+                    description={t("Re-copies OptiScaler and ANR FG files into this game (after a game update, or if something stopped working). Settings are kept.")}
+                    disabled={!info?.installed || busy !== null || generatorSaving || loadingStatus || status?.running}
+                    onClick={doPatch}>
+                    {busy === "patch" ? t("Installing…") : t("Reinstall ANR FG")}
+                  </ButtonItem>
+                </PanelSectionRow>
+              )}
 
               {status?.proxy === "dxgi.dll" && status.mode === "full" && (
                 <PanelSectionRow>
