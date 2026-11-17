@@ -65,6 +65,10 @@ import {
   updateAllGames,
   updateFromGithub,
   UpdateInfo,
+  getNpuSr,
+  setNpuSr,
+  setNpuSrModel,
+  type NpuSrStatus,
 } from "./api";
 import { registerFocusRoot, withSettingFocus, openMenuWithFocus } from "./focus";
 import { t, translateMessage, initializeLanguage, subscribeLanguage, getLanguage } from "./i18n";
@@ -516,6 +520,38 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     finally { setBusy(null); await loadStatus(id, true); }
   });
 
+  const [npu, setNpu] = useState<NpuSrStatus | null>(null);
+  const loadNpu = useCallback(async (id: string) => {
+    if (!id) return setNpu(null);
+    try {
+      const r = await getNpuSr(id);
+      if (selectedApp.current === id) setNpu(r.status === "success" ? r : null);
+    } catch {
+      if (selectedApp.current === id) setNpu(null);
+    }
+  }, []);
+  useEffect(() => {
+    void loadNpu(appid);
+    const timer = setInterval(() => void loadNpu(appid), 3000);
+    return () => clearInterval(timer);
+  }, [appid, loadNpu]);
+  const changeNpu = withSettingFocus(async (enabled: boolean) => {
+    const current = await getLaunchOptions(Number(appid));
+    const r = await setNpuSr(appid, enabled, current);
+    if (r.status === "success" && r.launch_options !== undefined) setLaunchOptions(Number(appid), r.launch_options);
+    toast(r.message || r.status);
+    await loadNpu(appid);
+  });
+  const changeNpuModel = withSettingFocus(async (model: string) => {
+    const r = await setNpuSrModel(model);
+    toast(r.message || r.status);
+    await loadNpu(appid);
+  });
+  const npuLine = !npu?.enabled ? "" : npu.live
+    ? t("NPU {0} ms · {1} → {2} · {3}", (npu.live.npu_ms ?? 0).toFixed(1), npu.live.in ?? "?", npu.live.out ?? "?",
+        npu.live.connected ? t("NPU active") : t("GPU fallback (bilinear)"))
+    : t("Service: {0} · model: {1}", npu.service ?? "?", npu.model ?? t("default"));
+
   const changeDxgiFix = withSettingFocus(async (enabled: boolean) => {
     const current = await getLaunchOptions(Number(appid));
     const result = await setDxgiFix(appid, enabled, current);
@@ -732,10 +768,44 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 <b>{upscaler?.choice ? upscaler.options?.find(o => o.value === upscaler.choice)?.label || upscaler.choice : t("Package defaults")}</b>
                 <span style={{ opacity: 0.7 }}>{t("Frame generation")}</span>
                 <b style={{ textAlign: "right" }}>{status?.lsfg ? "LSFG" : patched ? generatorLabel : t("Off")}</b>
+                {npu && <>
+                  <span style={{ opacity: 0.7 }}>{t("NPU upscaling")}</span>
+                  <b style={{ textAlign: "right", color: npu.enabled ? "#86dca5" : undefined }}>
+                    {npu.enabled ? (npu.models?.find((m) => m.file === npu.model)?.label?.split(" (")[0] || t("On")) : t("Off")}</b>
+                </>}
               </div>
               {status?.status === "error" && <div style={{ ...small, color: "#ff9b91", marginTop: "8px" }}>{status.message}</div>}
             </div>
           </PanelSectionRow>
+
+          {npu && (
+            <>
+              <PanelSectionRow>
+                <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU upscaling (Ryzen AI)")}</div>
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <ToggleField label={t("Upscale 720p → 1080p on the NPU")}
+                  description={npu.available
+                    ? t("Set the game to 1280×720. The NPU restores detail while the GPU renders the game. With FSR 4, pick a render quality for 720p output. Applies on the next game start.")
+                    : t("Not installed on this device: {0}.", (npu.missing ?? []).map((m) => t(m)).join(", "))}
+                  checked={Boolean(npu.enabled)}
+                  disabled={!npu.available && !npu.enabled}
+                  onChange={(enabled: boolean) => void changeNpu(enabled)} />
+              </PanelSectionRow>
+              {npu.available && (npu.models?.length ?? 0) > 0 && (
+                <PanelSectionRow>
+                  <DropdownItem
+                    onMenuWillOpen={openMenuWithFocus}
+                    label={t("NPU model")}
+                    description={npu.models?.find((m) => m.file === npu.model)?.note || t("Shared by all NPU games. A running game switches in a few seconds.")}
+                    selectedOption={npu.model ?? ""}
+                    rgOptions={(npu.models ?? []).map((m) => ({ data: m.file, label: m.label }))}
+                    onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                </PanelSectionRow>
+              )}
+              {npuLine && <PanelSectionRow><div style={small}>{npuLine}</div></PanelSectionRow>}
+            </>
+          )}
 
 
 

@@ -40,6 +40,7 @@ class Generators(unittest.TestCase):
         self.root = Path(self.temp.name)
         decky.DECKY_PLUGIN_RUNTIME_DIR = str(self.root / "runtime")
         decky.DECKY_PLUGIN_SETTINGS_DIR = str(self.root / "settings")
+        decky.HOME = str(self.root / "home")
         self.game = self.root / "game"
         (self.game / "OptiScaler").mkdir(parents=True)
         (self.game / "game.exe").touch()

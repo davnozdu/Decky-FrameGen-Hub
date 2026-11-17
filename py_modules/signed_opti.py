@@ -193,6 +193,7 @@ class SignedOptiMixin:
                 "package": "auto", "fsr31": "fsr31", "fsr4": "fsr31",
                 "fsr4lite": "fsr31", "xess": "xess",
             }[choice],
+            ("Upscalers", "VulkanUpscaler"): "auto",
             ("FSR", "UpscalerIndex"): "0" if fsr4 else "1",
             ("FSR", "Fsr4Update"): "false",
             # ANR-build keys (Lite model selection); the signed 0.9.4 core ignores them,

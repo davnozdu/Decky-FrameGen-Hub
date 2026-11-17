@@ -30,6 +30,7 @@ from xefg import GeneratorMixin, XEFG_LOG, XEFG_BUILD
 from lsfg import LsfgMixin
 from fsr4 import Fsr4Mixin
 from signed_opti import SignedOptiMixin, SIGNED_LITE_VERSION
+from npusr import NpuSrMixin
 
 GITHUB_REPO = "apex-compute/ANR"
 GITHUB_API_LATEST = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -86,7 +87,7 @@ def _plugin_version_key(version: str) -> tuple:
     return (_version_key(base), not bool(prerelease), _version_key(prerelease))
 
 
-class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
+class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def _main(self):
@@ -926,6 +927,9 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             return {"status": "error", "message": "Close the game first."}
         entry = self._load_state()["games"].get(str(appid), {})
         proxy = entry.get("proxy")
+        npu = str(appid) in self._npusr_apps()
+        if npu:
+            current = self._npusr_launch(current, True)  # keep the NPU upscaler's driver option across patches
         if entry.get("mode") != "full" or not proxy:
             return {"status": "success", "launch_options": current}
         required = self._optiscaler_required(str(appid))
@@ -1609,6 +1613,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
     # OptiScaler [UpscaleRatio]: output size divided by render size, per axis.
     RENDER_QUALITY = {
         "game": ("As set in the game", None),
+        "native": ("Native AA", 1.0),  # FSR 4 as anti-aliasing only (e.g. 720p in, 720p out, NPU to 1080p)
         "ultra_quality": ("Ultra Quality", 1.3),
         "quality": ("Quality", 1.5),
         "balanced": ("Balanced", 1.7),
@@ -1807,17 +1812,18 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
     def _upscaler_values(self, choice: str, watermark: bool) -> dict[tuple[str, str], str]:
         wm = "true" if watermark else "auto"
         if choice == "fsr31":
-            return {("Upscalers", "Dx12Upscaler"): "ffx", ("FSR", "UpscalerIndex"): "1",
+            return {("Upscalers", "Dx12Upscaler"): "ffx", ("Upscalers", "VulkanUpscaler"): "auto", ("FSR", "UpscalerIndex"): "1",
                     ("FSR", "Fsr4GpuSupport"): "auto", ("FSR", "Fsr4Model"): "auto",
                     ("FSR", "Fsr4EnableWatermark"): "auto"}
         if choice == "fsr4":
             rdna4 = self._gpu_is_rdna4()
-            return {("Upscalers", "Dx12Upscaler"): "ffx", ("FSR", "UpscalerIndex"): "0",
+            return {("Upscalers", "Dx12Upscaler"): "ffx", ("Upscalers", "VulkanUpscaler"): "auto", ("FSR", "UpscalerIndex"): "0",
                     ("FSR", "Fsr4GpuSupport"): "auto" if rdna4 else "2",
                     ("FSR", "Fsr4Model"): "auto" if rdna4 else "1",
                     ("FSR", "Fsr4EnableWatermark"): wm}
         if choice == "xess":
-            return {("Upscalers", "Dx12Upscaler"): "xess", ("FSR", "Fsr4EnableWatermark"): "auto"}
+            return {("Upscalers", "Dx12Upscaler"): "xess", ("Upscalers", "VulkanUpscaler"): "auto",
+                    ("FSR", "Fsr4EnableWatermark"): "auto"}
         return {}
 
     def _apply_fsr4_lite(self, appid: str, ini: Path, watermark: bool) -> dict:
@@ -1858,6 +1864,9 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
                     managed.append({"path": str(dest), "sha256": expected})
                 self._set_ini_sections(ini, {
                     ("Upscalers", "Dx12Upscaler"): "fsr31" if signed_lite else "ffx",
+                    # Vulkan games (e.g. RDR2): INT8 Lite exists only in the Vulkan driver provider amdvkffx64,
+                    # which OptiScaler uses through its native Vulkan FFX path.
+                    ("Upscalers", "VulkanUpscaler"): "ffx",
                     ("FSR", "UpscalerIndex"): "0",
                     ("FSR", "Fsr4GpuSupport"): "auto" if signed_lite else "4", ("FSR", "Fsr4Model"): "auto" if signed_lite else "3",
                     ("FSR", "Fsr4ForceEnableInt8"): "3" if signed_lite else "auto",
@@ -1961,9 +1970,12 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
         try:
             if choice not in self.UPSCALERS:
                 return {"status": "error", "message": f"Unknown upscaler {choice}"}
-            if (choice == "fsr4lite" and self._load_state()["games"].get(str(appid), {}).get("signed_optiscaler")
-                    and not self._signed_core_has_lite(self._load_state()["games"].get(str(appid), {}))):
-                return {"status": "error", "message": "FSR 4 Lite needs OptiScaler 0.10 Nightly. Select it in OptiScaler version for this game first."}
+            entry = self._load_state()["games"].get(str(appid), {})
+            lite_core = self._signed_core_has_lite(entry) or self._active_core(entry) == "nightly"
+            if choice == "fsr4lite" and not lite_core and self._core_group(entry.get("generator", "anr")) == "fg":
+                return {"status": "error", "message": "FSR 4 Lite works only on OptiScaler 0.9.5 (or 0.10 Nightly). "
+                                                      "ANR FG and XeFG need another core: turn frame generation off or "
+                                                      "choose Lossless Scaling, then select FSR 4 Lite."}
             game = self._game(str(appid))
             if not game:
                 return {"status": "error", "message": "The game is not in the Steam library."}
@@ -1975,7 +1987,21 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin):
             async with self._generator_lock():
                 if self._is_running(game):
                     return {"status": "error", "message": "Close the game first."}
-                return await asyncio.to_thread(self._apply_upscaler, str(appid), target, choice, bool(watermark))
+                note = ""
+                entry = self._load_state()["games"].get(str(appid), {})
+                if (choice == "fsr4lite" and not (self._signed_core_has_lite(entry) or self._active_core(entry) == "nightly")
+                        and entry.get("mode") == "full" and entry.get("proxy")):
+                    try:
+                        await asyncio.to_thread(self._set_optiscaler_core, str(appid), "signed095")
+                    except ValueError as exc:
+                        return {"status": "error", "message": "FSR 4 Lite needs OptiScaler 0.9.5-pre5 (signed) or 0.10 Nightly. "
+                                                              f"Select one in OptiScaler version for this game first. {exc}"}
+                    self._remember_core(str(appid), "signed095")
+                    note = " OptiScaler switched to 0.9.5-pre5 (signed): FSR 4 Lite needs it."
+                result = await asyncio.to_thread(self._apply_upscaler, str(appid), target, choice, bool(watermark))
+                if note and result.get("status") == "success":
+                    result["message"] = result.get("message", "") + note
+                return result
         except Exception as exc:
             decky.logger.error(f"[ANR] set_upscaler {appid}: {exc}")
             return {"status": "error", "message": str(exc)}

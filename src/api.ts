@@ -51,6 +51,12 @@ export type GameStatus = Result & {
   proton?: { tool: string | null; source: "game" | "default"; prefix: string | null; native: boolean };
 };
 
+export type NpuSrLive = { in?: string; out?: string; frames?: number; npu_frames?: number; fallback_frames?: number;
+  npu_ms?: number; connected?: boolean };
+export type NpuSrModel = { file: string; label: string; note?: string };
+export type NpuSrStatus = Result & { available?: boolean; missing?: string[]; enabled?: boolean; service?: string;
+  model?: string | null; models?: NpuSrModel[]; live?: NpuSrLive | null };
+
 export type PatchResult = Result & { launch_options?: string; mode?: string; proxy?: string | null };
 
 export const getAnrInfo = callable<[], AnrInfo>("get_anr_info");
@@ -64,6 +70,9 @@ export const setOptiscalerCore = callable<[appid: string, core: string, current:
 export const setSignedOptiscaler = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_signed_optiscaler");
 export const setDxgiFix = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_dxgi_fix");
 export const recommendedLaunchOptions = callable<[appid: string, current: string], PatchResult>("recommended_launch_options");
+export const getNpuSr = callable<[appid: string], NpuSrStatus>("get_npu_sr");
+export const setNpuSr = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_npu_sr");
+export const setNpuSrModel = callable<[model: string], Result>("set_npu_sr_model");
 export const getGameStatus = callable<[appid: string], GameStatus>("get_game_status");
 export const patchGame = callable<
   [appid: string, current_launch_options: string, target_dir: string],
