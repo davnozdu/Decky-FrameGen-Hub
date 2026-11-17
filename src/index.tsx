@@ -477,6 +477,12 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       if (r.launch_options !== undefined && r.launch_options !== current) {
         setLaunchOptions(Number(appid), r.launch_options);
       }
+      if (npu?.enabled) {  // a restored game also runs without the NPU upscaler
+        const now = await getLaunchOptions(Number(appid));
+        const n = await setNpuSr(appid, false, now);
+        if (n.status === "success" && n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
+        void loadNpu(appid);
+      }
       toast(r.message || t("Unpatched."));
     } catch (e) {
       toast(errorText(e));
@@ -738,49 +744,6 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     toast((await copyText(anrLaunchLine)) ? t("Copied: {0}", anrLaunchLine) : t("Could not copy to the clipboard."));
   };
 
-  // Temporarily run the game without the plugin (e.g. native frames for training or an A/B check): drop only
-  // this plugin's proxy override from the launch options and switch NPU off; files and profiles stay.
-  const vanillaKey = `fgh-vanilla-${appid}`;
-  const runWithoutPlugin = async () => {
-    if (busy !== null || status?.running) return;
-    try {
-      let current = await getLaunchOptions(Number(appid));
-      const npuWas = Boolean(npu?.enabled);
-      if (npuWas) {
-        const n = await setNpuSr(appid, false, current);
-        if (n.status === "success" && n.launch_options !== undefined) current = n.launch_options;
-      }
-      const next = current.replace(/WINEDLLOVERRIDES="([^"]*)"\s*/, (_m, v: string) => {
-        const parts = v.split(";").filter((p) => p && p !== `${proxyBase}=n,b` && p !== `${proxyBase}=b`);
-        return parts.length ? `WINEDLLOVERRIDES="${parts.join(";")}" ` : "";
-      }).trim();
-      setLaunchOptions(Number(appid), next === "%command%" ? "" : next);
-      try { localStorage.setItem(vanillaKey, JSON.stringify({ npu: npuWas })); } catch { /* storage unavailable */ }
-      toast(t("The game starts without the plugin now. Press \"Return the plugin to the game\" afterwards."));
-    } catch (e) {
-      toast(errorText(e));
-    }
-    window.setTimeout(() => { void loadStatus(appid, true); void loadNpu(appid); }, 500);
-  };
-  const returnPlugin = async () => {
-    if (busy !== null || status?.running) return;
-    try {
-      const r = await syncLaunchMode(appid);
-      let saved: { npu?: boolean } = {};
-      try { saved = JSON.parse(localStorage.getItem(vanillaKey) || "{}"); } catch { /* none */ }
-      if (saved.npu) {
-        const current = await getLaunchOptions(Number(appid));
-        const n = await setNpuSr(appid, true, current);
-        if (n.status === "success" && n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
-      }
-      try { localStorage.removeItem(vanillaKey); } catch { /* storage unavailable */ }
-      toast(r.status === "success" ? t("The plugin is back for this game.") : (r.message || r.status));
-    } catch (e) {
-      toast(errorText(e));
-    }
-    window.setTimeout(() => { void loadStatus(appid, true); void loadNpu(appid); }, 500);
-  };
-
   const applyLaunch = async () => {
     const r = await syncLaunchMode(appid);
     if (r.status !== "success") toast(r.message || r.status);
@@ -847,21 +810,17 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               {status?.status === "error" && <div style={{ ...small, color: "#ff9b91", marginTop: "8px" }}>{status.message}</div>}
             </div>
           </PanelSectionRow>
-          {patched && status?.mode === "full" && (
-            <PanelSectionRow>
-              {launchHasOverride
-                ? <ButtonItem layout="below" disabled={busy !== null || Boolean(status?.running)}
-                    description={t("Removes only the plugin's launch option (and NPU) so the game runs as without the plugin. Files and settings stay. Close the game first.")}
-                    onClick={() => void runWithoutPlugin()}>
-                    {t("Run the game without the plugin (temporarily)")}
-                  </ButtonItem>
-                : <ButtonItem layout="below" disabled={busy !== null || Boolean(status?.running)}
-                    description={t("The game currently starts without the plugin. This puts the launch option (and NPU, if it was on) back.")}
-                    onClick={() => void returnPlugin()}>
-                    {t("Return the plugin to the game")}
-                  </ButtonItem>}
-            </PanelSectionRow>
-          )}
+          <PanelSectionRow>
+            <ButtonItem layout="below"
+              description={status?.running ? t("Close the game to restore it.")
+                : patched || status?.lsfg || status?.managed || npu?.enabled
+                ? t("Removes this plugin's patches and launch options, disables its Lossless Scaling profile and the NPU upscaler, and restores backed-up files. Other mods and shared imported libraries are kept.")
+                : t("This game has no changes managed by this plugin.")}
+              disabled={busy !== null || generatorSaving || loadingStatus || status?.running || !(patched || status?.lsfg || status?.managed || npu?.enabled)}
+              onClick={doUnpatch}>
+              {busy === "unpatch" ? t("Restoring game…") : t("Restore game (remove plugin patches)")}
+            </ButtonItem>
+          </PanelSectionRow>
 
           {npu && !upscaler?.options && (
             <>
@@ -1454,17 +1413,6 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   <pre style={{ ...small, whiteSpace: "pre-wrap", maxHeight: "240px", overflowY: "auto" }}>{log}</pre>
                 </PanelSectionRow>
               )}
-          <PanelSectionRow>
-            <ButtonItem layout="below"
-              description={status?.running ? t("Close the game to restore it.")
-                : patched || status?.lsfg || status?.managed
-                ? t("Removes this plugin's patches, disables its Lossless Scaling profile and restores backed-up files. Other mods and shared imported libraries are kept.")
-                : t("This game has no changes managed by this plugin.")}
-              disabled={busy !== null || generatorSaving || loadingStatus || status?.running || !(patched || status?.lsfg || status?.managed)}
-              onClick={doUnpatch}>
-              {busy === "unpatch" ? t("Restoring game…") : t("Restore game (remove plugin patches)")}
-            </ButtonItem>
-          </PanelSectionRow>
               </>}
             </>
           )}

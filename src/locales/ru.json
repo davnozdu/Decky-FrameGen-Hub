@@ -521,5 +521,6 @@
   "Return the plugin to the game": "Вернуть плагин в игру",
   "The game currently starts without the plugin. This puts the launch option (and NPU, if it was on) back.": "Сейчас игра запускается без плагина. Кнопка вернёт параметр запуска (и NPU, если он был включён).",
   "The game starts without the plugin now. Press \"Return the plugin to the game\" afterwards.": "Теперь игра запускается без плагина. Потом нажмите «Вернуть плагин в игру».",
-  "The plugin is back for this game.": "Плагин снова включён для этой игры."
+  "The plugin is back for this game.": "Плагин снова включён для этой игры.",
+  "Removes this plugin's patches and launch options, disables its Lossless Scaling profile and the NPU upscaler, and restores backed-up files. Other mods and shared imported libraries are kept.": "Удаляет патчи и параметры запуска плагина, выключает профиль Lossless Scaling и NPU-апскейл, восстанавливает сохранённые файлы. Другие моды и общие импортированные библиотеки остаются."
 }
