@@ -68,6 +68,7 @@ import {
   getNpuSr,
   setNpuSr,
   setNpuSrModel,
+  setNpuCapture,
   type NpuSrStatus,
 } from "./api";
 import { registerFocusRoot, withSettingFocus, openMenuWithFocus } from "./focus";
@@ -545,6 +546,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const current = await getLaunchOptions(Number(appid));
     const r = await setNpuSr(appid, enabled, current);
     if (r.status === "success" && r.launch_options !== undefined) setLaunchOptions(Number(appid), r.launch_options);
+    toast(r.message || r.status);
+    await loadNpu(appid);
+  });
+  const changeNpuCapture = withSettingFocus(async (on: boolean) => {
+    const r = await setNpuCapture(on);
     toast(r.message || r.status);
     await loadNpu(appid);
   });
@@ -1039,6 +1045,14 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                     </PanelSectionRow>
                   )}
                 </>
+              )}
+              {npu?.capture?.available && (
+                <PanelSectionRow>
+                  <ToggleField label={t("Collect frames to train the NPU model")}
+                    description={t("Saves native game frames (no upscaling) every few seconds to retrain the NPU models. Use Upscaler Off, native resolution and no frame generation; upscaled frames are skipped. Collected: {0}.", npu.capture.frames ?? 0)}
+                    checked={Boolean(npu.capture.active)}
+                    onChange={(on: boolean) => void changeNpuCapture(on)} />
+                </PanelSectionRow>
               )}
               <PanelSectionRow><div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.07em", opacity: 0.65, marginTop: "14px" }}>{t("2 · Smoothness")}</div></PanelSectionRow>
               <PanelSectionRow>

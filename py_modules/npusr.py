@@ -154,7 +154,48 @@ class NpuSrMixin:
             "model": self._npusr_model(),
             "models": self._npusr_models(),
             "live": self._npusr_live(),
+            "capture": self._npusr_capture_state(),
         }
+
+    # ── Training-frame capture (native game frames for retraining the NPU models) ──────────────────────────────
+
+    def _npusr_capture_script(self) -> Path:
+        return self._home() / "AsusNPU" / "capture.sh"
+
+    def _npusr_capture_state(self) -> dict:
+        frames = list((self._home() / "AsusNPU" / "train-frames").glob("*/*.png"))
+        rc, out = self._npusr_systemctl("is-active", "npu-capture.service")
+        return {"available": self._npusr_capture_script().is_file(), "active": rc == 0, "frames": len(frames)}
+
+    async def set_npu_capture(self, enabled: bool) -> dict:
+        return await asyncio.to_thread(self._npusr_set_capture, bool(enabled))
+
+    def _npusr_set_capture(self, enabled: bool) -> dict:
+        if enabled and not self._npusr_capture_script().is_file():
+            return {"status": "error", "message": "The frame capture script is not installed on this device."}
+        self._npusr_systemctl("stop", "npu-capture.service")
+        self._npusr_systemctl("reset-failed", "npu-capture.service")
+        if enabled:
+            script = self._npusr_capture_script()
+            log = script.parent / "capture.log"
+            rc, out = self._npusr_systemctl_run("npu-capture", ["bash", "-c", f"exec bash '{script}' 21600 4 >> '{log}' 2>&1"])
+            if rc != 0:
+                decky.logger.error(f"[NPU-SR] capture start: {out}")
+                return {"status": "error", "message": "Frame capture did not start. See the plugin log."}
+            return {"status": "success", "message": "Frame capture on: native frames are saved every few seconds."}
+        return {"status": "success", "message": "Frame capture off."}
+
+    def _npusr_systemctl_run(self, unit: str, cmd: list[str]) -> tuple[int, str]:
+        uid = os.getuid()
+        env = dict(os.environ)
+        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+        env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus")
+        try:
+            proc = subprocess.run(["systemd-run", "--user", f"--unit={unit}", "--collect", *cmd],
+                                  capture_output=True, text=True, timeout=20, env=env)
+            return proc.returncode, (proc.stdout + proc.stderr).strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return 1, str(exc)
 
     # ── API ───────────────────────────────────────────────────────────────────
 

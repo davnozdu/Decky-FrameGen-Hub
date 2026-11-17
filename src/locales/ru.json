@@ -522,5 +522,11 @@
   "The game currently starts without the plugin. This puts the launch option (and NPU, if it was on) back.": "Сейчас игра запускается без плагина. Кнопка вернёт параметр запуска (и NPU, если он был включён).",
   "The game starts without the plugin now. Press \"Return the plugin to the game\" afterwards.": "Теперь игра запускается без плагина. Потом нажмите «Вернуть плагин в игру».",
   "The plugin is back for this game.": "Плагин снова включён для этой игры.",
-  "Removes this plugin's patches and launch options, disables its Lossless Scaling profile and the NPU upscaler, and restores backed-up files. Other mods and shared imported libraries are kept.": "Удаляет патчи и параметры запуска плагина, выключает профиль Lossless Scaling и NPU-апскейл, восстанавливает сохранённые файлы. Другие моды и общие импортированные библиотеки остаются."
+  "Removes this plugin's patches and launch options, disables its Lossless Scaling profile and the NPU upscaler, and restores backed-up files. Other mods and shared imported libraries are kept.": "Удаляет патчи и параметры запуска плагина, выключает профиль Lossless Scaling и NPU-апскейл, восстанавливает сохранённые файлы. Другие моды и общие импортированные библиотеки остаются.",
+  "Collect frames to train the NPU model": "Собирать кадры для обучения NPU",
+  "Saves native game frames (no upscaling) every few seconds to retrain the NPU models. Use Upscaler Off, native resolution and no frame generation; upscaled frames are skipped. Collected: {0}.": "Каждые несколько секунд сохраняет родные кадры игры (без апскейла) для дообучения моделей NPU. Нужно: «Апскейлер» → «Выкл.», родное разрешение, без генерации кадров; кадры с апскейлом пропускаются. Собрано: {0}.",
+  "The frame capture script is not installed on this device.": "Скрипт сбора кадров не установлен на этом устройстве.",
+  "Frame capture did not start. See the plugin log.": "Сбор кадров не запустился. Смотрите журнал плагина.",
+  "Frame capture on: native frames are saved every few seconds.": "Сбор кадров включён: родные кадры сохраняются каждые несколько секунд.",
+  "Frame capture off.": "Сбор кадров выключен."
 }

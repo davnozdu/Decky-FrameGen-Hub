@@ -55,7 +55,8 @@ export type NpuSrLive = { in?: string; out?: string; frames?: number; npu_frames
   npu_ms?: number; connected?: boolean };
 export type NpuSrModel = { file: string; label: string; note?: string };
 export type NpuSrStatus = Result & { available?: boolean; missing?: string[]; enabled?: boolean; service?: string;
-  model?: string | null; models?: NpuSrModel[]; live?: NpuSrLive | null };
+  model?: string | null; models?: NpuSrModel[]; live?: NpuSrLive | null;
+  capture?: { available?: boolean; active?: boolean; frames?: number } };
 
 export type PatchResult = Result & { launch_options?: string; mode?: string; proxy?: string | null };
 
@@ -73,6 +74,7 @@ export const recommendedLaunchOptions = callable<[appid: string, current: string
 export const getNpuSr = callable<[appid: string], NpuSrStatus>("get_npu_sr");
 export const setNpuSr = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_npu_sr");
 export const setNpuSrModel = callable<[model: string], Result>("set_npu_sr_model");
+export const setNpuCapture = callable<[enabled: boolean], Result>("set_npu_capture");
 export const getGameStatus = callable<[appid: string], GameStatus>("get_game_status");
 export const patchGame = callable<
   [appid: string, current_launch_options: string, target_dir: string],
