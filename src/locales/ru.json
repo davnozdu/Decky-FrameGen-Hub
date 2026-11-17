@@ -515,5 +515,11 @@
   "LSFG: turn off the game's own frame generation.": "LSFG: выключите генерацию кадров в самой игре.",
   "Frame generation: off.": "Генерация кадров: выключена.",
   "{0} (not recommended with NPU)": "{0} (с NPU не рекомендуется)",
-  "With NPU upscaling, ANR FG and XeFG lower FPS: they run on the same GPU, which is the bottleneck at low TDP. Choose Lossless Scaling or Off.": "С NPU-апскейлом ANR FG и XeFG снижают FPS: они считаются на той же видеокарте, которой при низком TDP и так не хватает. Выберите Lossless Scaling или «Выкл.»."
+  "With NPU upscaling, ANR FG and XeFG lower FPS: they run on the same GPU, which is the bottleneck at low TDP. Choose Lossless Scaling or Off.": "С NPU-апскейлом ANR FG и XeFG снижают FPS: они считаются на той же видеокарте, которой при низком TDP и так не хватает. Выберите Lossless Scaling или «Выкл.».",
+  "Run the game without the plugin (temporarily)": "Временно запустить игру без плагина",
+  "Removes only the plugin's launch option (and NPU) so the game runs as without the plugin. Files and settings stay. Close the game first.": "Убирает только параметр запуска плагина (и NPU) — игра запустится как без плагина. Файлы и настройки остаются. Сначала закройте игру.",
+  "Return the plugin to the game": "Вернуть плагин в игру",
+  "The game currently starts without the plugin. This puts the launch option (and NPU, if it was on) back.": "Сейчас игра запускается без плагина. Кнопка вернёт параметр запуска (и NPU, если он был включён).",
+  "The game starts without the plugin now. Press \"Return the plugin to the game\" afterwards.": "Теперь игра запускается без плагина. Потом нажмите «Вернуть плагин в игру».",
+  "The plugin is back for this game.": "Плагин снова включён для этой игры."
 }
