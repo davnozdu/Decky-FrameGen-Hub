@@ -513,5 +513,7 @@
   "What to set in the game": "Что включить в самой игре",
   "NPU: game resolution 1280×720 (if the game keeps 1920×1080, set Steam → game Properties → Game resolution 1280×720). DLSS/FSR off, TAA on.": "NPU: разрешение игры 1280×720 (если игра остаётся в 1920×1080 — Steam → Свойства игры → «Разрешение игры» 1280×720). DLSS/FSR выкл., TAA вкл.",
   "LSFG: turn off the game's own frame generation.": "LSFG: выключите генерацию кадров в самой игре.",
-  "Frame generation: off.": "Генерация кадров: выключена."
+  "Frame generation: off.": "Генерация кадров: выключена.",
+  "{0} (not recommended with NPU)": "{0} (с NPU не рекомендуется)",
+  "With NPU upscaling, ANR FG and XeFG lower FPS: they run on the same GPU, which is the bottleneck at low TDP. Choose Lossless Scaling or Off.": "С NPU-апскейлом ANR FG и XeFG снижают FPS: они считаются на той же видеокарте, которой при низком TDP и так не хватает. Выберите Lossless Scaling или «Выкл.»."
 }

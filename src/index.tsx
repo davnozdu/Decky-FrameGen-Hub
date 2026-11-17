@@ -1036,8 +1036,8 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   disabled={busy !== null || status?.running}
                   selectedOption={status?.generator?.choice || "anr"}
                   rgOptions={[
-                    ...(status?.fg_available !== false ? [{ data: "anr", label: "ANR FG" }] : []),
-                    ...(status?.fg_available !== false && status?.generator?.available !== false ? [{ data: "xefg", label: t("XeFG XMX Port · Build 10 (beta)") }] : []),
+                    ...(status?.fg_available !== false ? [{ data: "anr", label: npu?.enabled ? t("{0} (not recommended with NPU)", "ANR FG") : "ANR FG" }] : []),
+                    ...(status?.fg_available !== false && status?.generator?.available !== false ? [{ data: "xefg", label: npu?.enabled ? t("{0} (not recommended with NPU)", t("XeFG XMX Port · Build 10 (beta)")) : t("XeFG XMX Port · Build 10 (beta)") }] : []),
                     { data: "lsfg", label: "Lossless Scaling (lsfg-vk)" },
                     { data: "off", label: "Off" },
                     ...(status?.generator?.choice === "custom" ? [{ data: "custom", label: status.generator.provider }] : []),
@@ -1045,6 +1045,13 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   onChange={(o) => { if (o.data !== "custom") void changeGenerator(String(o.data)); }}
                 />
               </PanelSectionRow>
+              {npu?.enabled && ["anr", "xefg"].includes(genChoice) && (
+                <PanelSectionRow>
+                  <div style={{ ...small, opacity: 1, color: "#ffd866", padding: "8px 10px", borderRadius: "8px", background: "rgba(255,216,102,0.10)" }}>
+                    {t("With NPU upscaling, ANR FG and XeFG lower FPS: they run on the same GPU, which is the bottleneck at low TDP. Choose Lossless Scaling or Off.")}
+                  </div>
+                </PanelSectionRow>
+              )}
               {isXefg && (
                 <PanelSectionRow>
                   <div style={small}>
