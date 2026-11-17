@@ -153,5 +153,23 @@ class Fsr4LiteCore(unittest.TestCase):
         self.assertEqual(self.p._upscaler_values("fsr31", False)[("Upscalers", "VulkanUpscaler")], "auto")
 
 
+class UpscalerOff(unittest.TestCase):
+    def setUp(self):
+        fixtures.Generators.setUp(self)
+
+    def test_off_resets_ratio_and_marks_state(self):
+        self.ini.write_text(self.ini.read_text() + "\n[UpscaleRatio]\nUpscaleRatioOverrideEnabled=true\nUpscaleRatioOverrideValue=1.5\n[FSR]\nFsr4Model=3\n")
+        state = self.p._load_state(); state["games"]["1"].update(upscaler="fsr4lite", render_quality="quality", generator="off"); self.p._save_state(state)
+        r = self.p._apply_upscaler_off("1", self.ini)
+        self.assertEqual(r["status"], "success")
+        self.assertIn("OptiScaler is not needed", r["message"])
+        text = self.ini.read_text()
+        self.assertIn("UpscaleRatioOverrideEnabled=auto", text)
+        self.assertIn("Fsr4Model=auto", text)
+        e = self.p._load_state()["games"]["1"]
+        self.assertEqual((e["upscaler"], e["render_quality"]), ("off", None))
+        self.assertIn("off", self.p.UPSCALERS)
+
+
 if __name__ == "__main__":
     unittest.main()

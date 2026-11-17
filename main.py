@@ -1604,6 +1604,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
     FSR4_DLL = "amdxcffx64.dll"
     RDNA4_DEVICE_IDS = {0x7550, 0x7551, 0x7590, 0x7591, 0x7599, 0x75A0, 0x75A3}
     UPSCALERS = {
+        "off": "Off (game's own anti-aliasing)",
         "package": "As in the ANR package",
         "fsr31": "FSR 3.1",
         "fsr4": "FSR 4 (ML)",
@@ -1826,6 +1827,33 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
                     ("FSR", "Fsr4EnableWatermark"): "auto"}
         return {}
 
+    def _apply_upscaler_off(self, appid: str, ini: Path) -> dict:
+        """No OptiScaler upscaling: the game renders with its own anti-aliasing (e.g. TAA at 720p) and, when NPU
+        upscaling is enabled, the npu-sr layer does 720p -> 1080p. Plugin-managed FSR 4 DLLs are removed."""
+        state = self._load_state()
+        entry = state["games"].setdefault(appid, {})
+        keep = []
+        for m in entry.get("managed_files", []):
+            p = Path(m.get("path", ""))
+            if p.name in self.FSR4_DLL_NAMES and p.exists() and self._file_sha256(p) == m.get("sha256"):
+                p.unlink()
+            elif p.exists():
+                keep.append(m)
+        self._set_ini_sections(ini, {
+            ("Upscalers", "Dx12Upscaler"): "auto", ("Upscalers", "VulkanUpscaler"): "auto",
+            ("FSR", "UpscalerIndex"): "auto", ("FSR", "Fsr4Model"): "auto", ("FSR", "Fsr4GpuSupport"): "auto",
+            ("FSR", "Fsr4EnableWatermark"): "auto",
+            ("UpscaleRatio", "UpscaleRatioOverrideEnabled"): "auto", ("UpscaleRatio", "UpscaleRatioOverrideValue"): "auto",
+        })
+        entry.update(upscaler="off", upscaler_watermark=False, render_quality=None, managed_files=keep)
+        self._save_state(state)
+        msg = "Upscaler off: turn DLSS/FSR off in the game and use its TAA."
+        if str(appid) in self._npusr_apps():
+            msg += " NPU upscaling stays on and does 720p -> 1080p."
+        if entry.get("generator") in ("off", "lsfg"):
+            msg += " OptiScaler is not needed for this setup."
+        return {"status": "success", "message": msg + " Restart the game."}
+
     def _apply_fsr4_lite(self, appid: str, ini: Path, watermark: bool) -> dict:
         ini = ini.resolve()
         src = self._local_fsr4_source()
@@ -1904,6 +1932,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
         if not ini or not ini.exists():
             return {"status": "error", "message": "OptiScaler.ini not found for this game."}
         core_entry = self._load_state()["games"].get(str(appid), {})
+        if choice == "off":
+            return self._apply_upscaler_off(appid, ini)
         if core_entry.get("signed_optiscaler") and not (choice == "fsr4lite" and self._signed_core_has_lite(core_entry)):
             return self._apply_signed_upscaler(appid, ini, choice, watermark)
         if choice == "fsr4lite":

@@ -494,5 +494,12 @@
   "On": "Вкл",
   "FSR 4 Lite works only on OptiScaler 0.9.5 (or 0.10 Nightly). ANR FG and XeFG need another core: turn frame generation off or choose Lossless Scaling, then select FSR 4 Lite.": "FSR 4 Lite работает только на OptiScaler 0.9.5 (или 0.10 Nightly). ANR FG и XeFG требуют другое ядро: выключите генерацию кадров или выберите Lossless Scaling, затем выберите FSR 4 Lite.",
   "OptiScaler switched to 0.9.5-pre5 (signed): FSR 4 Lite needs it.": "OptiScaler переключён на 0.9.5-pre5 (подписанный): он нужен для FSR 4 Lite.",
-  "FSR 4 Lite needs OptiScaler 0.9.5-pre5 (signed) or 0.10 Nightly. Select one in OptiScaler version for this game first. {0}": "Для FSR 4 Lite нужен OptiScaler 0.9.5-pre5 (подписанный) или 0.10 Nightly. Сначала выберите его в версии OptiScaler для этой игры. {0}"
+  "FSR 4 Lite needs OptiScaler 0.9.5-pre5 (signed) or 0.10 Nightly. Select one in OptiScaler version for this game first. {0}": "Для FSR 4 Lite нужен OptiScaler 0.9.5-pre5 (подписанный) или 0.10 Nightly. Сначала выберите его в версии OptiScaler для этой игры. {0}",
+  "Off (game's own anti-aliasing)": "Выкл. (сглаживание самой игры)",
+  "Upscaler off: turn DLSS/FSR off in the game and use its TAA.": "Апскейлер выключен: выключите DLSS/FSR в игре и используйте её TAA.",
+  "NPU upscaling stays on and does 720p -> 1080p.": "NPU-апскейл остаётся включённым и делает 720p → 1080p.",
+  "OptiScaler is not needed for this setup.": "OptiScaler для этой настройки не нужен.",
+  "Restart the game.": "Перезапустите игру.",
+  "Game TAA → NPU 1080p": "TAA игры → NPU 1080p",
+  "{0} → NPU 1080p": "{0} → NPU 1080p"
 }

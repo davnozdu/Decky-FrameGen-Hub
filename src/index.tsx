@@ -765,7 +765,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "8px", fontSize: "12px" }}>
                 <span style={{ opacity: 0.7 }}>{t("Image upscaling")}</span>
-                <b>{upscaler?.choice ? upscaler.options?.find(o => o.value === upscaler.choice)?.label || upscaler.choice : t("Package defaults")}</b>
+                <b>{(() => {
+                  const base = upscaler?.choice ? upscaler.options?.find(o => o.value === upscaler.choice)?.label || upscaler.choice : t("Package defaults");
+                  if (!npu?.enabled) return base;
+                  return !upscaler?.choice || upscaler.choice === "off" ? t("Game TAA → NPU 1080p") : t("{0} → NPU 1080p", base);
+                })()}</b>
                 <span style={{ opacity: 0.7 }}>{t("Frame generation")}</span>
                 <b style={{ textAlign: "right" }}>{status?.lsfg ? "LSFG" : patched ? generatorLabel : t("Off")}</b>
                 {npu && <>
