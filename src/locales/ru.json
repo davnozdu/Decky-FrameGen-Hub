@@ -458,7 +458,6 @@
   "Frame generator changed, but the OptiScaler core for it could not be installed: {0}": "Генератор кадров изменён, но ядро OptiScaler для него установить не удалось: {0}",
   "NPU upscaling (Ryzen AI)": "NPU-апскейл (Ryzen AI)",
   "Upscale 720p → 1080p on the NPU": "Апскейл 720p → 1080p на NPU",
-  "Set the game to 1280×720. The NPU restores detail while the GPU renders the game. With FSR 4, pick a render quality for 720p output. Applies on the next game start.": "Поставьте в игре 1280×720. NPU восстанавливает детали, пока GPU рисует игру. С FSR 4 выбирайте качество рендера под выход 720p. Применяется со следующего запуска игры.",
   "Vulkan layer": "слой Vulkan",
   "layer manifest": "манифест слоя",
   "NPU service": "сервис NPU",
@@ -547,5 +546,9 @@
   "NPU package {0} imported ({1} models).": "Пакет NPU {0} загружен (моделей: {1}).",
   "One-time step in Desktop Mode (Konsole): {0}": "Один раз в режиме рабочего стола (Konsole): {0}",
   "The Ryzen AI runtime is missing: see the NPU section.": "Нет среды Ryzen AI: смотрите раздел NPU.",
-  "Not a valid NPU package ZIP.": "Это не ZIP-пакет NPU."
+  "Not a valid NPU package ZIP.": "Это не ZIP-пакет NPU.",
+  "OptiScaler and frame generation removed from the game.": "OptiScaler и генерация кадров убраны из игры.",
+  "Lossless Scaling turned off.": "Lossless Scaling выключен.",
+  "Add Lossless Scaling yourself if you want frame generation.": "Если нужна генерация кадров — включите Lossless Scaling сами.",
+  "Set the game to 1280×720. The NPU upscales to 1080p while the GPU renders the game. Turning it on removes OptiScaler and frame generation from the game; add Lossless Scaling yourself if you want it. Applies on the next game start.": "Поставьте в игре 1280×720. NPU растягивает до 1080p, пока GPU рисует игру. При включении из игры убираются OptiScaler и генерация кадров; Lossless Scaling при желании включите сами. Применится при следующем запуске игры."
 }

@@ -546,6 +546,12 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     return () => clearInterval(timer);
   }, [appid, loadNpu]);
   const changeNpu = withSettingFocus(async (enabled: boolean) => {
+    if (enabled) {
+      try { toast(await enableNpuClean()); } catch (e) { toast(errorText(e)); }
+      await loadStatus(appid, true);
+      await loadNpu(appid);
+      return;
+    }
     const current = await getLaunchOptions(Number(appid));
     const r = await setNpuSr(appid, enabled, current);
     if (r.status === "success" && r.launch_options !== undefined) setLaunchOptions(Number(appid), r.launch_options);
@@ -629,9 +635,42 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   });
 
   // Upscaler dropdown with the NPU folded in: "npu" = OptiScaler upscaling off + NPU 720p -> 1080p.
+  // NPU mode = the clean game + NPU: removes OptiScaler and turns frame generation off. Anything else is opt-in.
+  const enableNpuClean = async (): Promise<string> => {
+    const parts: string[] = [];
+    if (patched) {
+      const current = await getLaunchOptions(Number(appid));
+      const u = await unpatchGame(appid, current);
+      if (u.status !== "success") throw new Error(u.message || t("Unpatch failed."));
+      if (u.launch_options !== undefined && u.launch_options !== current) setLaunchOptions(Number(appid), u.launch_options);
+      parts.push(t("OptiScaler and frame generation removed from the game."));
+    } else if (status?.lsfg) {
+      const g = await setGeneratorMode(appid, "off", 2, 1.0, false);
+      if (g.status !== "success") throw new Error(g.message || t("Failed."));
+      await syncLaunchMode(appid);
+      parts.push(t("Lossless Scaling turned off."));
+    }
+    const now = await getLaunchOptions(Number(appid));
+    const n = await setNpuSr(appid, true, now);
+    if (n.status !== "success") throw new Error(n.message || t("Failed."));
+    if (n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
+    parts.push(n.message || "");
+    parts.push(t("Add Lossless Scaling yourself if you want frame generation."));
+    return parts.filter(Boolean).join(" ");
+  };
+
   const changeUpscalerChoice = withSettingFocus(async (choice: string, watermark: boolean) => {
     if (busy !== null) return;
-    const npuWanted = choice === "npu";
+    if (choice === "npu") {
+      setBusy("unpatch");
+      try { toast(await enableNpuClean()); } catch (e) { toast(errorText(e)); }
+      finally { setBusy(null); }
+      await loadStatus(appid, true);
+      await loadGames();
+      await loadNpu(appid);
+      return;
+    }
+    const npuWanted = false;
     const optiChoice = choice === "npu" ? "off" : choice;
     try {
       const r = await setUpscaler(appid, optiChoice, watermark);
@@ -839,7 +878,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               {!upscaler?.options && <PanelSectionRow>
                 <ToggleField label={t("Upscaler: NPU 720p → 1080p")}
                   description={npu.available
-                    ? t("Set the game to 1280×720. The NPU restores detail while the GPU renders the game. With FSR 4, pick a render quality for 720p output. Applies on the next game start.")
+                    ? t("Set the game to 1280×720. The NPU upscales to 1080p while the GPU renders the game. Turning it on removes OptiScaler and frame generation from the game; add Lossless Scaling yourself if you want it. Applies on the next game start.")
                     : t("Not installed on this device: {0}. Import the NPU package in Tools → Libraries and updates.", (npu.missing ?? []).map((m) => t(m)).join(", "))}
                   checked={Boolean(npu.enabled)}
                   disabled={!npu.available && !npu.enabled}
