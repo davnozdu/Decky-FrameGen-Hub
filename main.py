@@ -1197,6 +1197,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
             return {"status": "error", "message": str(exc)}
 
     def _patch(self, appid: str, current_launch_options: str, target_dir: str) -> dict:
+        if str(appid) in self._npusr_apps():
+            return {"status": "error", "message": "NPU mode is on: the game runs without OptiScaler. Turn the NPU off first."}
         version = self._active_version()
         if not version:
             return {"status": "error", "message": "The Hub base files are not set up yet: open Tools → Libraries and updates."}

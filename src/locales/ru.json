@@ -550,5 +550,7 @@
   "OptiScaler and frame generation removed from the game.": "OptiScaler и генерация кадров убраны из игры.",
   "Lossless Scaling turned off.": "Lossless Scaling выключен.",
   "Add Lossless Scaling yourself if you want frame generation.": "Если нужна генерация кадров — включите Lossless Scaling сами.",
-  "Set the game to 1280×720. The NPU upscales to 1080p while the GPU renders the game. Turning it on removes OptiScaler and frame generation from the game; add Lossless Scaling yourself if you want it. Applies on the next game start.": "Поставьте в игре 1280×720. NPU растягивает до 1080p, пока GPU рисует игру. При включении из игры убираются OptiScaler и генерация кадров; Lossless Scaling при желании включите сами. Применится при следующем запуске игры."
+  "Set the game to 1280×720. The NPU upscales to 1080p while the GPU renders the game. Turning it on removes OptiScaler and frame generation from the game; add Lossless Scaling yourself if you want it. Applies on the next game start.": "Поставьте в игре 1280×720. NPU растягивает до 1080p, пока GPU рисует игру. При включении из игры убираются OptiScaler и генерация кадров; Lossless Scaling при желании включите сами. Применится при следующем запуске игры.",
+  "NPU mode: the game runs clean, without OptiScaler. Nothing to install. For FSR 4, ANR FG or XeFG turn the NPU off first.": "Режим NPU: игра работает в чистом виде, без OptiScaler. Ничего устанавливать не нужно. Для FSR 4, ANR FG или XeFG сначала выключите NPU.",
+  "NPU mode is on: the game runs without OptiScaler. Turn the NPU off first.": "Включён режим NPU: игра работает без OptiScaler. Сначала выключите NPU."
 }

@@ -226,3 +226,15 @@ class NpuPackage(unittest.TestCase):
         bad = self.root / "x.zip"
         bad.write_text("nope")
         self.assertEqual(asyncio.run(self.p.import_npu_package(str(bad)))["message"], "Not a valid NPU package ZIP.")
+
+
+class NpuBlocksPatch(unittest.TestCase):
+    def setUp(self):
+        NpuSr.setUp(self)
+
+    def test_install_hub_is_refused_while_npu_mode_is_on(self):
+        NpuSr.install(self)
+        asyncio.run(self.p.set_npu_sr("1", True, ""))
+        r = self.p._patch("1", "", "")
+        self.assertEqual(r["status"], "error")
+        self.assertIn("NPU mode", r["message"])

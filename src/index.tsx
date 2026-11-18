@@ -956,7 +956,14 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             </PanelSectionRow>
           )}
 
-          {(!patched || outdated) && <>
+          {!patched && npu?.enabled && (
+            <PanelSectionRow>
+              <div style={{ ...small, opacity: 1 }}>
+                {t("NPU mode: the game runs clean, without OptiScaler. Nothing to install. For FSR 4, ANR FG or XeFG turn the NPU off first.")}
+              </div>
+            </PanelSectionRow>
+          )}
+          {(!patched || outdated) && !(npu?.enabled && !patched) && <>
           <PanelSectionRow>
             <ButtonItem
               layout="below"
