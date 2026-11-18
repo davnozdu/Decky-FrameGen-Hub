@@ -959,7 +959,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           {!patched && npu?.enabled && (
             <PanelSectionRow>
               <div style={{ ...small, opacity: 1 }}>
-                {t("NPU mode: the game runs clean, without OptiScaler. Nothing to install. For FSR 4, ANR FG or XeFG turn the NPU off first.")}
+                {t("NPU mode: the game runs clean, without OptiScaler. Nothing to install. For frame generation turn on Lossless Scaling below: it does not need OptiScaler. FSR 4, ANR FG and XeFG only lower FPS with the NPU.")}
               </div>
             </PanelSectionRow>
           )}
