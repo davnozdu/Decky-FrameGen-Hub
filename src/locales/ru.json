@@ -563,5 +563,7 @@
   "XeFG · installs OptiScaler": "XeFG · поставит OptiScaler",
   "Off": "Выкл.",
   "NPU model for 1024×576 (×2)": "Модель NPU для 1024×576 (×2)",
-  "Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.": "Включается сама, когда игра идёт в 1024×576 (разрешение игры в Steam): видеокарта рисует на 36% меньше пикселей, чем в 720p, а NPU растягивает вдвое."
+  "Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.": "Включается сама, когда игра идёт в 1024×576 (разрешение игры в Steam): видеокарта рисует на 36% меньше пикселей, чем в 720p, а NPU растягивает вдвое.",
+  "NPU sharpness": "Резкость NPU",
+  "Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.": "Дополнительная чёткость краёв и текстур после NPU, без ореолов. 0 — выкл. В запущенной игре меняется за секунду."
 }

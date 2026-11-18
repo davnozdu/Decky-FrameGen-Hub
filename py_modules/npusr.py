@@ -207,6 +207,7 @@ class NpuSrMixin:
             "model": self._npusr_model(),
             "models": self._npusr_models(),
             "model_x2": self._npusr_model("NPU_SR_MODEL_X2"),
+            "sharpness": self._npusr_sharpness(),
             "models_x2": self._npusr_models(x2=True),
             "live": self._npusr_live(),
             "capture": self._npusr_capture_state(),
@@ -330,6 +331,28 @@ class NpuSrMixin:
             return {"status": "error", "message": "Not a valid NPU package ZIP."}
         except Exception as exc:  # noqa: BLE001
             decky.logger.error(f"[NPU-SR] package import: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def _npusr_sharpness_file(self) -> Path:
+        return self._home() / ".config" / "npu-sr" / "sharpness"
+
+    def _npusr_sharpness(self) -> float:
+        try:
+            return max(0.0, min(1.0, float(self._npusr_sharpness_file().read_text().split()[0])))
+        except (OSError, ValueError, IndexError):
+            return 0.0
+
+    async def set_npu_sharpness(self, value: float) -> dict:
+        """Luma sharpening after the NPU (0 = off .. 1); a running game picks it up within a second."""
+        try:
+            v = max(0.0, min(1.0, round(float(value), 2)))
+            f = self._npusr_sharpness_file()
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(f"{v}\n", encoding="utf-8")
+            os.replace(tmp, f)
+            return {"status": "success", "sharpness": v}
+        except (OSError, ValueError) as exc:
             return {"status": "error", "message": str(exc)}
 
     # ── API ───────────────────────────────────────────────────────────────────

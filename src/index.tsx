@@ -69,6 +69,7 @@ import {
   setNpuSr,
   setNpuSrModel,
   setNpuCapture,
+  setNpuSharpness,
   getNpuPackage,
   importNpuPackage,
   NpuPackage,
@@ -561,6 +562,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const timer = setInterval(() => void loadNpu(appid), 3000);
     return () => clearInterval(timer);
   }, [appid, loadNpu]);
+  const changeNpuSharpness = async (v: number) => {
+    setNpu((cur) => cur ? { ...cur, sharpness: v } : cur);
+    const r = await setNpuSharpness(v);
+    if (r.status !== "success") toast(r.message || r.status);
+  };
   const changeNpuCapture = withSettingFocus(async (on: boolean) => {
     const r = await setNpuCapture(on);
     toast(r.message || r.status);
@@ -973,6 +979,14 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                     selectedOption={npu.model_x2 ?? ""}
                     rgOptions={(npu.models_x2 ?? []).map((m) => ({ data: m.file, label: m.label }))}
                     onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                </PanelSectionRow>
+              )}
+              {npu.available && npu.enabled && (
+                <PanelSectionRow>
+                  <SliderField label={t("NPU sharpness")} value={npu.sharpness ?? 0} min={0} max={1} step={0.1}
+                    showValue notchCount={11} notchTicksVisible={false}
+                    description={t("Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.")}
+                    onChange={(v: number) => void changeNpuSharpness(Math.round(v * 10) / 10)} />
                 </PanelSectionRow>
               )}
               {npuLine && <PanelSectionRow><div style={small}>{npuLine}</div></PanelSectionRow>}
