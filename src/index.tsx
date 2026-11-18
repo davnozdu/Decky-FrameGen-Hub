@@ -545,19 +545,6 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const timer = setInterval(() => void loadNpu(appid), 3000);
     return () => clearInterval(timer);
   }, [appid, loadNpu]);
-  const changeNpu = withSettingFocus(async (enabled: boolean) => {
-    if (enabled) {
-      try { toast(await enableNpuClean()); } catch (e) { toast(errorText(e)); }
-      await loadStatus(appid, true);
-      await loadNpu(appid);
-      return;
-    }
-    const current = await getLaunchOptions(Number(appid));
-    const r = await setNpuSr(appid, enabled, current);
-    if (r.status === "success" && r.launch_options !== undefined) setLaunchOptions(Number(appid), r.launch_options);
-    toast(r.message || r.status);
-    await loadNpu(appid);
-  });
   const changeNpuCapture = withSettingFocus(async (on: boolean) => {
     const r = await setNpuCapture(on);
     toast(r.message || r.status);
@@ -658,6 +645,57 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     parts.push(t("Add Lossless Scaling yourself if you want frame generation."));
     return parts.filter(Boolean).join(" ");
   };
+
+  // FSR 4 / Lite, ANR FG and XeFG run through OptiScaler: turn the NPU off, install the Hub, then apply the choice.
+  const installHubThen = async (apply: () => Promise<{ status: string; message?: string }>): Promise<string> => {
+    const parts: string[] = [];
+    if (npu?.enabled) {
+      const before = await getLaunchOptions(Number(appid));
+      const n = await setNpuSr(appid, false, before);
+      if (n.status !== "success") throw new Error(n.message || t("Failed."));
+      if (n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
+    }
+    const current = await getLaunchOptions(Number(appid));
+    const r = await patchGame(appid, current, dirChoice === AUTO_DIR ? "" : dirChoice);
+    if (r.status !== "success") throw new Error(r.message || t("Patch failed."));
+    if (r.launch_options !== undefined && r.launch_options !== current) setLaunchOptions(Number(appid), r.launch_options);
+    parts.push(r.message || "");
+    const a = await apply();
+    if (a.status !== "success") throw new Error(a.message || t("Failed."));
+    await syncLaunchMode(appid);
+    parts.push(a.message || "");
+    return parts.filter(Boolean).join(" ");
+  };
+
+  // Unpatched game: one Upscaler list and one Frame generator list; OptiScaler is installed only when a choice needs it.
+  const changeCleanChoice = withSettingFocus(async (kind: "upscaler" | "generator", choice: string) => {
+    if (busy !== null) return;
+    setBusy("patch");
+    try {
+      if (kind === "upscaler" && choice === "npu") toast(await enableNpuClean());
+      else if (kind === "upscaler" && choice === "off") {
+        if (npu?.enabled) {
+          const current = await getLaunchOptions(Number(appid));
+          const n = await setNpuSr(appid, false, current);
+          if (n.status === "success" && n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
+          toast(n.message || n.status);
+        }
+      } else if (kind === "upscaler") toast(await installHubThen(() => setUpscaler(appid, choice, false)));
+      else if (choice === "anr" || choice === "xefg") toast(await installHubThen(() => setGeneratorMode(appid, choice, 2, 1.0, false)));
+      else {
+        const g = await setGeneratorMode(appid, choice, 2, 1.0, false);
+        if (g.status === "success") await syncLaunchMode(appid);
+        toast(g.message || g.status);
+      }
+    } catch (e) {
+      toast(errorText(e));
+    } finally {
+      setBusy(null);
+    }
+    await loadStatus(appid, true);
+    await loadGames();
+    await loadNpu(appid);
+  });
 
   const changeUpscalerChoice = withSettingFocus(async (choice: string, watermark: boolean) => {
     if (busy !== null) return;
@@ -876,13 +914,23 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU 720p → 1080p (Ryzen AI)")}</div>
               </PanelSectionRow>
               {!upscaler?.options && <PanelSectionRow>
-                <ToggleField label={t("Upscaler: NPU 720p → 1080p")}
-                  description={npu.available
+                <DropdownItem
+                  onMenuWillOpen={openMenuWithFocus}
+                  label={t("Upscaler")}
+                  description={npu.enabled
                     ? t("Set the game to 1280×720. The NPU upscales to 1080p while the GPU renders the game. Turning it on removes OptiScaler and frame generation from the game; add Lossless Scaling yourself if you want it. Applies on the next game start.")
+                    : npu.available
+                    ? t("FSR 4 and FSR 4 Lite install OptiScaler into the game automatically. NPU and Off keep the game clean.")
                     : t("Not installed on this device: {0}. Import the NPU package in Tools → Libraries and updates.", (npu.missing ?? []).map((m) => t(m)).join(", "))}
-                  checked={Boolean(npu.enabled)}
-                  disabled={!npu.available && !npu.enabled}
-                  onChange={(enabled: boolean) => void changeNpu(enabled)} />
+                  selectedOption={npu.enabled ? "npu" : "off"}
+                  disabled={busy !== null || Boolean(status?.running) || status?.installed === false}
+                  rgOptions={[
+                    { data: "off", label: t("Off (game's own)") },
+                    ...(npu.available ? [{ data: "npu", label: t("NPU 720p → 1080p (Ryzen AI)") }] : []),
+                    { data: "fsr4", label: t("FSR 4 · installs OptiScaler") },
+                    { data: "fsr4lite", label: t("FSR 4 Lite · installs OptiScaler") },
+                  ]}
+                  onChange={(o: { data: string }) => void changeCleanChoice("upscaler", String(o.data))} />
               </PanelSectionRow>}
               {upscaler?.options && !npu.enabled && (
                 <PanelSectionRow><div style={small}>{npu.available
@@ -919,13 +967,21 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           {!patched && status?.installed !== false && (
             <>
               <PanelSectionRow>
-                <ToggleField
-                  label={t("Lossless Scaling frame generation")}
-                  description={t("lsfg-vk works in any game, also without DLSS Frame Generation. Needs your Lossless Scaling (Steam, branch lsfg-vk).")}
-                  checked={Boolean(status?.lsfg)}
-                  disabled={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
-                  onChange={(on: boolean) => void changeGenerator(on ? "lsfg" : "off")}
-                />
+                <DropdownItem
+                  onMenuWillOpen={openMenuWithFocus}
+                  label={t("Frame generator")}
+                  description={npu?.enabled
+                    ? t("With the NPU only Lossless Scaling helps: it needs no OptiScaler. ANR FG and XeFG turn the NPU off and install OptiScaler.")
+                    : t("Lossless Scaling works in any game without OptiScaler (needs your Lossless Scaling, Steam branch lsfg-vk). ANR FG and XeFG install OptiScaler automatically and replace the game's DLSS Frame Generation.")}
+                  selectedOption={status?.lsfg ? "lsfg" : "off"}
+                  disabled={busy !== null || Boolean(status?.running)}
+                  rgOptions={[
+                    { data: "off", label: t("Off") },
+                    { data: "lsfg", label: "Lossless Scaling" },
+                    { data: "anr", label: t("ANR FG · installs OptiScaler") },
+                    { data: "xefg", label: t("XeFG · installs OptiScaler") },
+                  ]}
+                  onChange={(o: { data: string }) => void changeCleanChoice("generator", String(o.data))} />
               </PanelSectionRow>
               {status?.lsfg && (
                 <LsfgControls profile={status.lsfg} busy={(busy === "patch" || busy === "unpatch") || Boolean(status?.running)}
