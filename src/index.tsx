@@ -924,12 +924,12 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             </ButtonItem>
           </PanelSectionRow>
 
-          {npu && !upscaler?.options && (
+          {npu && !patched && (
             <>
               <PanelSectionRow>
                 <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU 720p → 1080p (Ryzen AI)")}</div>
               </PanelSectionRow>
-              {!upscaler?.options && <PanelSectionRow>
+              {!patched && <PanelSectionRow>
                 <DropdownItem
                   onMenuWillOpen={openMenuWithFocus}
                   label={t("Upscaler")}
@@ -948,7 +948,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   ]}
                   onChange={(o: { data: string }) => void changeCleanChoice("upscaler", String(o.data))} />
               </PanelSectionRow>}
-              {upscaler?.options && !npu.enabled && (
+              {patched && !npu.enabled && (
                 <PanelSectionRow><div style={small}>{npu.available
                   ? t("Choose \"NPU 720p → 1080p\" in Upscaler below.")
                   : t("Not installed on this device: {0}. Import the NPU package in Tools → Libraries and updates.", (npu.missing ?? []).map((m) => t(m)).join(", "))}</div></PanelSectionRow>
