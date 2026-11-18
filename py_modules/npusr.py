@@ -141,6 +141,8 @@ class NpuSrMixin:
         for path in sorted(folder.glob("*.onnx")):
             if self._npusr_is_x2(path.name) != x2:
                 continue
+            if "300x512" in path.name:  # 1024x600 twin of a 1024x576 x2 model: loaded with it automatically
+                continue
             info = catalog.get(path.name, {}) if isinstance(catalog, dict) else {}
             if info.get("hidden"):
                 continue
