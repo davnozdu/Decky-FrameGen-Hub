@@ -143,10 +143,9 @@ class NpuSrMixin:
     def _npusr_launch(self, current: str, enabled: bool) -> str:
         cur = _NPUSR_ENV_RE.sub("", (current or "").strip()).strip()
         if enabled:
-            if "%command%" in cur:
-                cur = cur.replace("%command%", f"{NPUSR_LAUNCH_ENV} %command%", 1)
-            else:
-                cur = f"{NPUSR_LAUNCH_ENV} %command% {cur}".strip()
+            # Leading env assignment: it then reaches the game through any wrapper before %command%
+            # (e.g. `bash grip-deck-launch %command%`), instead of becoming the wrapper's argument.
+            cur = f"{NPUSR_LAUNCH_ENV} {cur}" if "%command%" in cur else f"{NPUSR_LAUNCH_ENV} %command% {cur}".strip()
         return "" if cur == "%command%" else cur
 
     def _npusr_model(self) -> str | None:

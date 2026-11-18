@@ -75,11 +75,16 @@ class NpuSr(unittest.TestCase):
         self.assertEqual(L("", False), "")
         line = 'WINEDLLOVERRIDES="dxgi=n,b" PROTON_LOG=1 %command% -skip'
         on = L(line, True)
-        self.assertEqual(on, f'WINEDLLOVERRIDES="dxgi=n,b" PROTON_LOG=1 {env} %command% -skip')
+        self.assertEqual(on, f'{env} WINEDLLOVERRIDES="dxgi=n,b" PROTON_LOG=1 %command% -skip')
         self.assertEqual(L(on, True), on)  # idempotent
         self.assertEqual(L(on, False), line)
         self.assertEqual(L(f"{env} %command%", False), "")
         self.assertEqual(L("-windowed", True), f"{env} %command% -windowed")
+        # Wrapper before %command% (Battle.net via Grip Deck): the env must not become the wrapper's argument.
+        wrapped = 'WINEDLLOVERRIDES="dxgi=n,b" bash "/x/grip-deck-launch" %command% --exec="launch Fen"'
+        self.assertEqual(L(wrapped, True), f"{env} {wrapped}")
+        broken = f'WINEDLLOVERRIDES="dxgi=n,b" bash "/x/grip-deck-launch" {env} %command% --exec="launch Fen"'
+        self.assertEqual(L(broken, True), f"{env} {wrapped}")  # repairs the old placement
 
     def test_enable_returns_launch_options(self):
         self.install()
