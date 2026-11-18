@@ -434,7 +434,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const [gameView, upscaleView, optiView, launchView] = views;
     if (gameView.status === "fulfilled" && gameView.value.status === "success") setStatus(gameView.value);
     else if (!silent) setStatus({ status: "error", message: gameView.status === "rejected" ? errorText(gameView.reason) : gameView.value.message });
+    // An unpatched game has no OptiScaler upscaler: drop the previous game state instead of keeping it.
     if (upscaleView.status === "fulfilled" && upscaleView.value.status === "success") setUpscalerInfo(upscaleView.value);
+    else setUpscalerInfo(null);
     if (optiView.status === "fulfilled" && optiView.value.status === "success") setOpti(optiView.value.settings);
     if (launchView.status === "fulfilled" && launchView.value !== undefined) setLaunchOptionsState(launchView.value);
     setLoadingStatus(false);
@@ -959,6 +961,17 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                     description={npu.models?.find((m) => m.file === npu.model)?.note || t("Shared by all NPU games. A running game switches in a few seconds.")}
                     selectedOption={npu.model ?? ""}
                     rgOptions={(npu.models ?? []).map((m) => ({ data: m.file, label: m.label }))}
+                    onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                </PanelSectionRow>
+              )}
+              {npu.available && npu.enabled && (npu.models_x2?.length ?? 0) > 0 && (
+                <PanelSectionRow>
+                  <DropdownItem
+                    onMenuWillOpen={openMenuWithFocus}
+                    label={t("NPU model for 1024×576 (×2)")}
+                    description={t("Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.")}
+                    selectedOption={npu.model_x2 ?? ""}
+                    rgOptions={(npu.models_x2 ?? []).map((m) => ({ data: m.file, label: m.label }))}
                     onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
                 </PanelSectionRow>
               )}

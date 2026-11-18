@@ -124,7 +124,12 @@ class NpuSrMixin:
     def _npusr_env_conf(self) -> Path:
         return self._home() / ".config" / "environment.d" / "npu-sr.conf"
 
-    def _npusr_models(self) -> list[dict]:
+    @staticmethod
+    def _npusr_is_x2(name: str) -> bool:
+        """x2 models (1024x576 input, 16 sub-pixels) are named *x2_*; everything else is x1.5 (1280x720)."""
+        return "x2_" in name
+
+    def _npusr_models(self, x2: bool = False) -> list[dict]:
         """Selectable models: *.onnx in the models folder (sub-folders such as archive/ are ignored).
         Optional models/catalog.json: {"file.onnx": {"label": "...", "note": "..."}} gives friendly names."""
         folder = self._npusr_dir() / "models"
@@ -134,6 +139,8 @@ class NpuSrMixin:
             catalog = {}
         models = []
         for path in sorted(folder.glob("*.onnx")):
+            if self._npusr_is_x2(path.name) != x2:
+                continue
             info = catalog.get(path.name, {}) if isinstance(catalog, dict) else {}
             if info.get("hidden"):
                 continue
@@ -150,11 +157,11 @@ class NpuSrMixin:
             cur = f"{NPUSR_LAUNCH_ENV} {cur}" if "%command%" in cur else f"{NPUSR_LAUNCH_ENV} %command% {cur}".strip()
         return "" if cur == "%command%" else cur
 
-    def _npusr_model(self) -> str | None:
+    def _npusr_model(self, var: str = "NPU_SR_MODEL") -> str | None:
         conf = self._npusr_env_conf()
         try:
             for line in conf.read_text(encoding="utf-8").splitlines():
-                if line.startswith("NPU_SR_MODEL="):
+                if line.startswith(var + "="):
                     return Path(line.split("=", 1)[1].strip()).name
         except OSError:
             pass
@@ -197,6 +204,8 @@ class NpuSrMixin:
             "service": out.splitlines()[-1] if out else ("active" if rc == 0 else "unknown"),
             "model": self._npusr_model(),
             "models": self._npusr_models(),
+            "model_x2": self._npusr_model("NPU_SR_MODEL_X2"),
+            "models_x2": self._npusr_models(x2=True),
             "live": self._npusr_live(),
             "capture": self._npusr_capture_state(),
         }
@@ -340,18 +349,25 @@ class NpuSrMixin:
         return await asyncio.to_thread(self._npusr_set_model, str(model))
 
     def _npusr_set_model(self, model: str) -> dict:
-        if model not in {m["file"] for m in self._npusr_models()}:
+        x2 = self._npusr_is_x2(model)
+        if model not in {m["file"] for m in self._npusr_models(x2=x2)}:
             return {"status": "error", "message": "Unknown NPU model."}
+        var = "NPU_SR_MODEL_X2" if x2 else "NPU_SR_MODEL"
         path = self._npusr_dir() / "models" / model
         conf = self._npusr_env_conf()
         try:
             conf.parent.mkdir(parents=True, exist_ok=True)
+            try:  # keep the other mode's model and any other lines
+                lines = [l for l in conf.read_text(encoding="utf-8").splitlines() if not l.startswith(var + "=")]
+            except OSError:
+                lines = []
+            lines.append(f"{var}={path}")
             tmp = conf.with_suffix(".tmp")
-            tmp.write_text(f"NPU_SR_MODEL={path}\n", encoding="utf-8")
+            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
             os.replace(tmp, conf)
         except OSError as exc:
             return {"status": "error", "message": f"Could not save the NPU model: {exc}"}
-        self._npusr_systemctl("set-environment", f"NPU_SR_MODEL={path}")
+        self._npusr_systemctl("set-environment", f"{var}={path}")
         rc, _ = self._npusr_systemctl("is-active", NPUSR_UNIT)
         if rc == 0:
             rc, out = self._npusr_systemctl("restart", NPUSR_UNIT)

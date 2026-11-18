@@ -561,5 +561,7 @@
   "Lossless Scaling works in any game without OptiScaler (needs your Lossless Scaling, Steam branch lsfg-vk). ANR FG and XeFG install OptiScaler automatically and replace the game's DLSS Frame Generation.": "Lossless Scaling работает в любой игре без OptiScaler (нужен ваш Lossless Scaling, ветка Steam lsfg-vk). ANR FG и XeFG сами ставят OptiScaler и подменяют DLSS Frame Generation игры.",
   "ANR FG · installs OptiScaler": "ANR FG · поставит OptiScaler",
   "XeFG · installs OptiScaler": "XeFG · поставит OptiScaler",
-  "Off": "Выкл."
+  "Off": "Выкл.",
+  "NPU model for 1024×576 (×2)": "Модель NPU для 1024×576 (×2)",
+  "Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.": "Включается сама, когда игра идёт в 1024×576 (разрешение игры в Steam): видеокарта рисует на 36% меньше пикселей, чем в 720p, а NPU растягивает вдвое."
 }

@@ -55,7 +55,7 @@ export type NpuSrLive = { in?: string; out?: string; frames?: number; npu_frames
   npu_ms?: number; connected?: boolean };
 export type NpuSrModel = { file: string; label: string; note?: string };
 export type NpuSrStatus = Result & { available?: boolean; missing?: string[]; enabled?: boolean; service?: string;
-  model?: string | null; models?: NpuSrModel[]; live?: NpuSrLive | null;
+  model?: string | null; models?: NpuSrModel[]; model_x2?: string | null; models_x2?: NpuSrModel[]; live?: NpuSrLive | null;
   capture?: { available?: boolean; active?: boolean; frames?: number } };
 
 export type PatchResult = Result & { launch_options?: string; mode?: string; proxy?: string | null };

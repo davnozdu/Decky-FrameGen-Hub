@@ -238,3 +238,26 @@ class NpuBlocksPatch(unittest.TestCase):
         r = self.p._patch("1", "", "")
         self.assertEqual(r["status"], "error")
         self.assertIn("NPU mode", r["message"])
+
+
+class NpuX2Models(unittest.TestCase):
+    def setUp(self):
+        NpuSr.setUp(self)
+        NpuSr.install(self)
+        m = self.home / "AsusNPU/npu-sr/models"
+        m.mkdir(parents=True, exist_ok=True)
+        for n in ("c16l4g3_qat_s2d_360x640x4_u8.onnx", "c32l6x2_qat_s2d_288x512x4_u8.onnx"):
+            (m / n).write_bytes(b"x")
+
+    def test_lists_are_separate_and_switching_keeps_the_other_mode(self):
+        st = asyncio.run(self.p.get_npu_sr("1"))
+        self.assertEqual([x["file"] for x in st["models"]], ["c16l4g3_qat_s2d_360x640x4_u8.onnx"])
+        self.assertEqual([x["file"] for x in st["models_x2"]], ["c32l6x2_qat_s2d_288x512x4_u8.onnx"])
+        self.assertEqual(asyncio.run(self.p.set_npu_sr_model("c16l4g3_qat_s2d_360x640x4_u8.onnx"))["status"], "success")
+        self.assertEqual(asyncio.run(self.p.set_npu_sr_model("c32l6x2_qat_s2d_288x512x4_u8.onnx"))["status"], "success")
+        conf = (self.home / ".config/environment.d/npu-sr.conf").read_text()
+        self.assertIn("NPU_SR_MODEL=", conf)
+        self.assertIn("NPU_SR_MODEL_X2=", conf)
+        st = asyncio.run(self.p.get_npu_sr("1"))
+        self.assertEqual(st["model_x2"], "c32l6x2_qat_s2d_288x512x4_u8.onnx")
+        self.assertEqual(st["model"], "c16l4g3_qat_s2d_360x640x4_u8.onnx")
