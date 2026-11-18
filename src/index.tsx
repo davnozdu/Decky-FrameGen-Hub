@@ -537,11 +537,17 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       const r = await getNpuSr(id);
       if (selectedApp.current === id) setNpu(r.status === "success" ? r : null);
       // Games set up before the layer became opt-in lack NPU_SR_ENABLE=1: add it once, silently.
+      // Best effort: a failure here must never hide the NPU controls.
       if (r.status === "success" && r.enabled && r.available) {
-        const current = await getLaunchOptions(Number(id));
-        if (!/(^|\s)NPU_SR_ENABLE=1(\s|$)/.test(current || "")) {
-          const n = await setNpuSr(id, true, current || "");
-          if (n.status === "success" && n.launch_options !== undefined) setLaunchOptions(Number(id), n.launch_options);
+        try {
+          const current = await getLaunchOptions(Number(id));
+          // Empty means Steam did not answer (or nothing to heal): never rewrite options from an empty read.
+          if (typeof current === "string" && current.trim() && !/(^|\s)NPU_SR_ENABLE=1(\s|$)/.test(current)) {
+            const n = await setNpuSr(id, true, current);
+            if (n.status === "success" && n.launch_options !== undefined) setLaunchOptions(Number(id), n.launch_options);
+          }
+        } catch (e) {
+          console.warn("[FrameGen Hub] NPU launch option heal failed", e);
         }
       }
     } catch {
