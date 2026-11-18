@@ -1194,7 +1194,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
     def _patch(self, appid: str, current_launch_options: str, target_dir: str) -> dict:
         version = self._active_version()
         if not version:
-            return {"status": "error", "message": "ANR FG is not set up yet."}
+            return {"status": "error", "message": "The Hub base files are not set up yet: open Tools → Libraries and updates."}
         game = self._game(appid)
         if not game:
             return {"status": "error", "message": "The game is not in the Steam library."}
@@ -1285,7 +1285,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
                 state["games"][appid]["generator"] = "anr"
                 self._save_state(state)
                 return {"status": "error", "launch_options": launch_options,
-                        "message": f"ANR installed, but the saved generator could not be restored: {exc}. Select XeFG again."}
+                        "message": f"Hub installed, but the saved generator could not be restored: {exc}. Select XeFG again."}
         if previous.get("signed_optiscaler") or previous.get("nightly_optiscaler"):
             try:
                 core = ("signed095" if self._signed_core_has_lite(previous) else "signed") if previous.get("signed_optiscaler") else "nightly"
@@ -1302,7 +1302,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
                 except Exception as inner:
                     decky.logger.error(f"[ANR] re-applying the upscaler for {appid}: {inner}")
                 return {"status": "error", "launch_options": launch_options,
-                        "message": f"ANR installed, but the selected OptiScaler core could not be restored: {exc}. Enable it again."}
+                        "message": f"Hub installed, but the selected OptiScaler core could not be restored: {exc}. Enable it again."}
         if proxy:
             launch_options = self._launch_with_override(launch_options, proxy, "n,b" if self._optiscaler_required(appid) else "b")
         return {
@@ -1311,7 +1311,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
             "mode": kind,
             "proxy": proxy,
             "output": output,
-            "message": f"ANR FG {version} installed in {game['name']}"
+            "message": f"Hub {version} installed in {game['name']}"
                        + (f" (OptiScaler as {proxy})." if proxy else " as an OptiScaler add-on."),
         }
 
@@ -1440,7 +1440,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
             target = self._resolve_target(game, self._load_state()["games"].get(str(appid)))
             desc = self._describe_dir(target) if target else None
             if not desc or not desc["anr_dir"]:
-                return {"status": "error", "message": "ANR FG is not installed in this game."}
+                return {"status": "error", "message": "The Hub is not installed in this game. Press Install Hub."}
             ini = desc["anr_dir"] / "dlssg" / "nr_fg.ini"
             if not ini.exists():
                 return {"status": "error", "message": f"{ini} is missing."}
@@ -1566,7 +1566,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
         target = self._resolve_target(game, self._load_state()["games"].get(appid))
         desc = self._describe_dir(target) if target else None
         if not desc or not desc["anr_dir"]:
-            return {"status": "success", "sessions": [], "message": "ANR FG is not installed in this game."}
+            return {"status": "success", "sessions": [], "message": "The Hub is not installed in this game. Press Install Hub."}
         logs = sorted((desc["anr_dir"] / "dlssg").glob("nr_fg-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
         sessions = []
         for log in logs:
@@ -2013,7 +2013,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
                 return {"status": "error", "message": "Close the game first."}
             target = self._resolve_target(game, self._load_state()["games"].get(str(appid)))
             if not target:
-                return {"status": "error", "message": "ANR FG is not installed in this game."}
+                return {"status": "error", "message": "The Hub is not installed in this game. Press Install Hub."}
             async with self._generator_lock():
                 if self._is_running(game):
                     return {"status": "error", "message": "Close the game first."}
@@ -2097,7 +2097,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
                 return await ls_core(r)
             if choice in ("anr", "xefg"):
                 if not patched:
-                    return {"status": "error", "message": "Install ANR first: ANR FG and XeFG run through its OptiScaler."}
+                    return {"status": "error", "message": "Install Hub first: ANR FG and XeFG run through its OptiScaler."}
                 was = (self._load_state()["games"].get(appid) or {}).get("generator")
                 # ANR FG / XeFG need their own core: swap it in before the generator is set.
                 async with self._generator_lock():
@@ -2179,7 +2179,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
                 return {"status": "error", "message": "The game is not in the Steam library."}
             target = self._resolve_target(game, self._load_state()["games"].get(str(appid)))
             if not target:
-                return {"status": "error", "message": "ANR FG is not installed in this game."}
+                return {"status": "error", "message": "The Hub is not installed in this game. Press Install Hub."}
             return await asyncio.to_thread(self._apply_render_quality, str(appid), target, choice)
         except Exception as exc:
             decky.logger.error(f"[ANR] set_render_quality {appid}: {exc}")

@@ -9,10 +9,13 @@ game files, so it combines with OptiScaler/FSR 4 (render below 720p, FSR to 720p
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import subprocess
+import tempfile
+import zipfile
 from pathlib import Path
 
 import decky
@@ -26,6 +29,46 @@ NPUSR_MANIFESTS = (
     Path("/usr/share/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
     Path("/etc/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
 )
+
+
+# Private NPU package (ZIP the user prepares; it is never downloaded): manifest.json + these files.
+NPUSR_PACKAGE_FILES = ("libVkLayer_npu_sr.so", "npu-sr-service", "run-service.sh", "runtime.sh", "npu-sr.service",
+                       "VkLayer_zz_npu_sr.json", "install-layer.sh")
+NPUSR_EXECUTABLES = {"npu-sr-service", "run-service.sh", "runtime.sh", "install-layer.sh"}
+_NPUSR_MEMBER_RE = re.compile(r"^(?:models/)?[A-Za-z0-9][A-Za-z0-9._-]*$")
+NPUSR_PACKAGE_MAX = 64 * 1024 * 1024
+# AMD Ryzen AI 1.9 runtime + XRT are not redistributable: the user installs them under ~/AsusNPU.
+NPUSR_RUNTIME_DIRS = ("runtime-1.9", "xrt-1.9", "sesr-env", "ubuntu-compat")
+
+
+def read_npusr_package(path: Path) -> tuple[dict, dict[str, bytes]]:
+    if path.stat().st_size > NPUSR_PACKAGE_MAX:
+        raise ValueError("The NPU package is too large (over 64 MB).")
+    with zipfile.ZipFile(path) as z:
+        names = [n for n in z.namelist() if not n.endswith("/")]
+        if "manifest.json" not in names:
+            raise ValueError("Not an NPU package: manifest.json is missing.")
+        manifest = json.loads(z.read("manifest.json"))
+        files = manifest.get("files")
+        if manifest.get("name") != "npu-sr" or not isinstance(files, dict):
+            raise ValueError("Not an NPU package: wrong manifest.")
+        payload: dict[str, bytes] = {}
+        for name, rec in files.items():
+            if not _NPUSR_MEMBER_RE.match(name) or name not in names:
+                raise ValueError(f"Bad or missing file in the NPU package: {name}")
+            data = z.read(name)
+            if hashlib.sha256(data).hexdigest() != rec.get("sha256"):
+                raise ValueError(f"Checksum mismatch in the NPU package: {name}")
+            payload[name] = data
+        extra = set(names) - set(files) - {"manifest.json"}
+        if extra:
+            raise ValueError("Unlisted files in the NPU package: " + ", ".join(sorted(extra)[:5]))
+    missing = [n for n in NPUSR_PACKAGE_FILES if n not in payload]
+    if missing:
+        raise ValueError("The NPU package lacks: " + ", ".join(missing))
+    if not any(n.startswith("models/") and n.endswith(".onnx") for n in payload):
+        raise ValueError("The NPU package has no models.")
+    return manifest, payload
 
 
 class NpuSrMixin:
@@ -196,6 +239,86 @@ class NpuSrMixin:
             return proc.returncode, (proc.stdout + proc.stderr).strip()
         except (OSError, subprocess.SubprocessError) as exc:
             return 1, str(exc)
+
+    # ── Private package import + device check ─────────────────────────────────
+
+    def _npusr_package_state(self) -> dict:
+        root = self._home() / "AsusNPU"
+        info = {}
+        try:
+            info = json.loads((self._npusr_dir() / "package.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        installed = all((self._npusr_dir() / n).is_file() for n in ("libVkLayer_npu_sr.so", "npu-sr-service"))
+        runtime_missing = [d for d in NPUSR_RUNTIME_DIRS if not (root / d).is_dir()]
+        layer_registered = any(p.is_file() for p in NPUSR_MANIFESTS)
+        npu_device = any(Path("/dev/accel").glob("accel*")) if Path("/dev/accel").is_dir() else False
+        rc, out = self._npusr_systemctl("is-active", NPUSR_UNIT)
+        return {
+            "status": "success",
+            "installed": installed,
+            "version": info.get("version") or ("local build" if installed else None),
+            "models": len(self._npusr_models()),
+            "runtime_ok": not runtime_missing,
+            "runtime_missing": [str(root / d) for d in runtime_missing],
+            "layer_registered": layer_registered,
+            "layer_command": f"sudo bash {self._npusr_dir() / 'install-layer.sh'}",
+            "npu_device": npu_device,
+            "service": out.splitlines()[-1] if out else ("active" if rc == 0 else "unknown"),
+            "home": str(self._home()),
+        }
+
+    def _npusr_import_package(self, archive: str) -> dict:
+        manifest, payload = read_npusr_package(Path(archive).expanduser())
+        dest = self._npusr_dir()
+        (dest / "models").mkdir(parents=True, exist_ok=True)
+        # The layer manifest points at the library by absolute path: rewrite it for this user's home.
+        layer = json.loads(payload["VkLayer_zz_npu_sr.json"])
+        layer["layer"]["library_path"] = str(dest / "libVkLayer_npu_sr.so")
+        payload["VkLayer_zz_npu_sr.json"] = (json.dumps(layer, indent=2) + "\n").encode()
+        with tempfile.TemporaryDirectory(prefix=".import-", dir=dest) as temp:
+            stage = Path(temp)
+            for name, data in payload.items():
+                tmp = stage / name.replace("/", "__")
+                tmp.write_bytes(data)
+                tmp.chmod(0o755 if name in NPUSR_EXECUTABLES else 0o644)
+            for name in payload:  # atomic per file: a running game keeps its mapped library
+                os.replace(stage / name.replace("/", "__"), dest / name)
+        (dest / "package.json").write_text(json.dumps({"version": manifest.get("version"), "files": sorted(payload)},
+                                                      indent=2), encoding="utf-8")
+        unit = self._npusr_unit_file()
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_bytes(payload["npu-sr.service"])
+        self._npusr_systemctl("daemon-reload")
+        models = self._npusr_models()
+        current = self._npusr_model()
+        if models and current not in {m["file"] for m in models}:
+            self._npusr_set_model(models[0]["file"])  # default model = first in the catalog
+        elif self._npusr_systemctl("is-active", NPUSR_UNIT)[0] == 0:
+            self._npusr_systemctl("restart", NPUSR_UNIT)
+        state = self._npusr_package_state()
+        msg = f"NPU package {manifest.get('version', '')} imported ({state['models']} models)."
+        if not state["layer_registered"]:
+            msg += f" One-time step in Desktop Mode (Konsole): {state['layer_command']}"
+        if not state["runtime_ok"]:
+            msg += " The Ryzen AI runtime is missing: see the NPU section."
+        decky.logger.info(f"[NPU-SR] package {manifest.get('version')} imported")
+        return {"status": "success", "message": msg, **{k: v for k, v in state.items() if k != "status"}}
+
+    async def get_npu_package(self) -> dict:
+        try:
+            return await asyncio.to_thread(self._npusr_package_state)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc)}
+
+    async def import_npu_package(self, archive: str) -> dict:
+        try:
+            return await asyncio.to_thread(self._npusr_import_package, str(archive))
+        except (zipfile.BadZipFile, json.JSONDecodeError):
+            return {"status": "error", "message": "Not a valid NPU package ZIP."}
+        except Exception as exc:  # noqa: BLE001
+            decky.logger.error(f"[NPU-SR] package import: {exc}")
+            return {"status": "error", "message": str(exc)}
 
     # ── API ───────────────────────────────────────────────────────────────────
 

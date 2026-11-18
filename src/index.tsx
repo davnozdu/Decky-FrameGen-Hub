@@ -69,6 +69,9 @@ import {
   setNpuSr,
   setNpuSrModel,
   setNpuCapture,
+  getNpuPackage,
+  importNpuPackage,
+  NpuPackage,
   type NpuSrStatus,
 } from "./api";
 import { registerFocusRoot, withSettingFocus, openMenuWithFocus } from "./focus";
@@ -162,7 +165,7 @@ function PackageSection({ info, reload }: { info: AnrInfo | null; reload: () => 
   const checkedAt = updates?.checked_at ? new Date(updates.checked_at).toLocaleString(getLanguage() === "ru" ? "ru-RU" : "en-US") : null;
 
   return (
-    <PanelSection title="ANR FG">
+    <PanelSection title={t("Updates and components")}>
       <PanelSectionRow>
         <ToggleField label={t("Automatically update ANR FG")}
           description={t("Checks every 6 hours, verifies SHA-256, and updates closed games. Running games update after closing. Profiles and generator choice are preserved.")}
@@ -216,7 +219,7 @@ function PackageSection({ info, reload }: { info: AnrInfo | null; reload: () => 
       )}
 
       <PanelSectionRow>
-        <Field label={t("Package")} focusable>
+        <Field label={t("ANR FG package")} focusable>
           {info === null ? "…" : info.installed ? info.version : <span style={{ color: "#ffd866" }}>{t("not set up")}</span>}
         </Field>
       </PanelSectionRow>
@@ -767,7 +770,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     if (!status || status.status === "error") return status?.message || "—";
     if (!patched) return t("Not patched");
     const how = status.mode === "addon" ? t("add-on to OptiScaler") : t("OptiScaler as {0}", status.proxy);
-    return t("{0} · ANR package {1} ({2})", generatorLabel, status.game_version ?? "?", how);
+    return t("{0} · Hub files {1} ({2})", generatorLabel, status.game_version ?? "?", how);
   })();
 
   return (
@@ -837,7 +840,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 <ToggleField label={t("Upscaler: NPU 720p → 1080p")}
                   description={npu.available
                     ? t("Set the game to 1280×720. The NPU restores detail while the GPU renders the game. With FSR 4, pick a render quality for 720p output. Applies on the next game start.")
-                    : t("Not installed on this device: {0}.", (npu.missing ?? []).map((m) => t(m)).join(", "))}
+                    : t("Not installed on this device: {0}. Import the NPU package in Tools → Libraries and updates.", (npu.missing ?? []).map((m) => t(m)).join(", "))}
                   checked={Boolean(npu.enabled)}
                   disabled={!npu.available && !npu.enabled}
                   onChange={(enabled: boolean) => void changeNpu(enabled)} />
@@ -845,7 +848,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               {upscaler?.options && !npu.enabled && (
                 <PanelSectionRow><div style={small}>{npu.available
                   ? t("Choose \"NPU 720p → 1080p\" in Upscaler below.")
-                  : t("Not installed on this device: {0}.", (npu.missing ?? []).map((m) => t(m)).join(", "))}</div></PanelSectionRow>
+                  : t("Not installed on this device: {0}. Import the NPU package in Tools → Libraries and updates.", (npu.missing ?? []).map((m) => t(m)).join(", "))}</div></PanelSectionRow>
               )}
               {npu.available && npu.enabled && (npu.models?.length ?? 0) > 0 && (
                 <PanelSectionRow>
@@ -926,8 +929,8 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 : patched
                 ? outdated
                   ? t("Update to {0}", status?.active_version)
-                  : t("Reinstall ANR FG")
-                : t("Install ANR FG")}
+                  : t("Reinstall Hub files")
+                : t("Install Hub")}
             </ButtonItem>
           </PanelSectionRow>
 
@@ -1188,10 +1191,10 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               {patched && !outdated && (
                 <PanelSectionRow>
                   <ButtonItem layout="below"
-                    description={t("Re-copies OptiScaler and ANR FG files into this game (after a game update, or if something stopped working). Settings are kept.")}
+                    description={t("Re-copies OptiScaler and the frame generator files into this game (after a game update, or if something stopped working). Settings are kept.")}
                     disabled={!info?.installed || busy !== null || generatorSaving || loadingStatus || status?.running}
                     onClick={doPatch}>
-                    {busy === "patch" ? t("Installing…") : t("Reinstall ANR FG")}
+                    {busy === "patch" ? t("Installing…") : t("Reinstall Hub files")}
                   </ButtonItem>
                 </PanelSectionRow>
               )}
@@ -1213,7 +1216,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
             <PanelSectionRow>
               <div style={{ ...small, color: status.proton.native ? "#ffd866" : undefined }}>
                 {status.proton.native
-                  ? t("Native Linux build (no .exe): ANR FG needs the Windows version under Proton.")
+                  ? t("Native Linux build (no .exe): the Hub needs the Windows version under Proton.")
                   : `Proton: ${status.proton.tool ?? t("Steam default")}${
                       status.proton.source === "default" ? t(" (default)") : ""
                     }${status.proton.prefix ? t(", prefix {0}", status.proton.prefix) : ""}`}
@@ -1635,10 +1638,11 @@ function HelpSection() {
     <PanelSection title={t("How to use")}>
       <PanelSectionRow>
         <div style={small}>
-          {" "}{t("1. Choose a game above and press Install ANR FG: the plugin sets the launch option WINEDLLOVERRIDES.")}{" "}<br />
-          {" "}{t("2. Start the game. In its graphics settings turn on DLSS Frame Generation (the NVIDIA option, not FSR): ANR FG takes its place. Turn in-game V-Sync off.")}{" "}<br />
-          {" "}{t("3. Works in D3D12 / Vulkan games that offer DLSS Frame Generation. OptiScaler's menu: Insert key.")}{" "}<br />
-          {" "}{t("Games patched by Decky Framegen must be unpatched there first.")}{" "}</div>
+          {" "}{t("1. Choose a game above and press Install Hub: the plugin copies its files and sets the launch options.")}{" "}<br />
+          {" "}{t("2. 1 · Image quality: pick an upscaler (FSR 4 / FSR 4 Lite / NPU 720p → 1080p) or Off.")}{" "}<br />
+          {" "}{t("3. 2 · Smoothness: pick a frame generator. Lossless Scaling works in any game; ANR FG and XeFG replace DLSS Frame Generation, so turn that on in the game.")}{" "}<br />
+          {" "}{t("4. Follow \"What to set in the game\" in the game card, start the game, turn in-game V-Sync off.")}{" "}<br />
+          {" "}{t("Restore game removes everything the plugin changed. OptiScaler's menu: Insert key.")}{" "}</div>
       </PanelSectionRow>
     </PanelSection>
   );
@@ -1727,6 +1731,55 @@ function Fsr4Libraries({ onImported }: { onImported: () => void }) {
   );
 }
 
+function NpuPackageSection({ onImported }: { onImported: () => void }) {
+  const [pkg, setPkg] = useState<NpuPackage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    try { setPkg(await getNpuPackage()); } catch (e) { toast(errorText(e)); }
+  }, []);
+  useEffect(() => void load(), [load]);
+  const importZip = async () => {
+    let path: string;
+    try {
+      const file = await openFilePicker(FileSelectionType.FILE, pkg?.home || "/home", true, true, undefined,
+        ["zip"], false, false);
+      path = file.realpath || file.path;
+    } catch { return; }
+    setBusy(true);
+    try {
+      const r = await importNpuPackage(path);
+      toast(r.message || r.status);
+      if (r.status === "success") { await load(); onImported(); }
+    } catch (e) { toast(errorText(e)); }
+    finally { setBusy(false); }
+  };
+  const warn = { ...small, color: "#ffd866" };
+  return (
+    <PanelSection title={t("NPU upscaler (Ryzen AI)")}>
+      <PanelSectionRow>
+        <Field label={t("NPU package")} focusable>
+          {pkg === null ? "…" : pkg.installed ? t("{0} · {1} models", pkg.version ?? "?", pkg.models ?? 0) : t("not installed")}
+        </Field>
+      </PanelSectionRow>
+      {pkg && !pkg.npu_device && (
+        <PanelSectionRow><div style={warn}>{t("No Ryzen AI NPU found (/dev/accel). NPU upscaling needs a Ryzen AI APU and the amdxdna kernel driver.")}</div></PanelSectionRow>
+      )}
+      {pkg && !pkg.runtime_ok && (
+        <PanelSectionRow><div style={warn}>{t("AMD Ryzen AI 1.9 runtime is missing (not redistributable). Install it to: {0}.", (pkg.runtime_missing ?? []).join(", "))}</div></PanelSectionRow>
+      )}
+      {pkg?.installed && !pkg.layer_registered && (
+        <PanelSectionRow><div style={warn}>{t("One-time step: in Desktop Mode open Konsole and run")}{" "}<code>{pkg.layer_command}</code></div></PanelSectionRow>
+      )}
+      <PanelSectionRow>
+        <ButtonItem layout="below" disabled={busy} onClick={() => void importZip()}
+          description={t("Private package you prepare yourself (npu-sr ZIP: Vulkan layer, NPU service, models). Checked by SHA-256; replaces the installed version, the selected model and game list are kept.")}>
+          {busy ? t("Importing…") : t("Import NPU package (ZIP)")}
+        </ButtonItem>
+      </PanelSectionRow>
+    </PanelSection>
+  );
+}
+
 function Content() {
   const focusRoot = useRef<HTMLDivElement>(null);
   useEffect(() => registerFocusRoot(focusRoot.current), []);
@@ -1749,7 +1802,7 @@ function Content() {
       <PanelSection title={t("Tools")}>
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={() => setShowTools(value => !value)}
-            description={t("Imported FSR libraries, plugin updates, benchmarks and help.")}>
+            description={t("Private libraries (FSR 4 Lite, Lossless Scaling, NPU), plugin updates, benchmarks and help.")}>
             {showTools ? t("Hide libraries and updates") : t("Libraries and updates")}
           </ButtonItem>
         </PanelSectionRow>
@@ -1757,6 +1810,7 @@ function Content() {
       {showTools && <>
         <PackageSection info={info} reload={reload} />
         <Fsr4Libraries onImported={() => setFsrRevision((v) => v + 1)} />
+        <NpuPackageSection onImported={() => setFsrRevision((v) => v + 1)} />
         <BenchmarkSection />
         <HelpSection />
       </>}

@@ -4,8 +4,17 @@
   "flags": [],
   "api_version": 1,
   "publish": {
-    "tags": ["framegen", "ANR", "XeFG", "OptiScaler", "DLSS-G"],
-    "description": "Choose a frame generator per game (ANR FG or XeFG), with OptiScaler upscalers and per-game profiles, for Proton games.",
+    "tags": [
+      "framegen",
+      "upscaler",
+      "OptiScaler",
+      "FSR4",
+      "LSFG",
+      "ANR",
+      "XeFG",
+      "NPU"
+    ],
+    "description": "One hub per game: upscalers (FSR 4, FSR 4 Lite, Ryzen AI NPU 720p\u21921080p) and frame generators (Lossless Scaling, ANR FG, XeFG) with OptiScaler and per-game profiles, for Proton games.",
     "image": ""
   }
 }

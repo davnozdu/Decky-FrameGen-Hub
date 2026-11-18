@@ -173,3 +173,51 @@ class UpscalerOff(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NpuPackage(unittest.TestCase):
+    """Private NPU package ZIP: verified by SHA-256, only listed files, installed under ~/AsusNPU/npu-sr."""
+
+    def setUp(self):
+        NpuSr.setUp(self)
+
+    def make_zip(self, extra=None, corrupt=False):
+        import hashlib
+        import zipfile
+        files = {n: f"#{n}\n".encode() for n in npusr.NPUSR_PACKAGE_FILES}
+        files["VkLayer_zz_npu_sr.json"] = json.dumps({"layer": {"library_path": "/home/other/x.so"}}).encode()
+        files["models/m1.onnx"] = b"onnx"
+        files["models/catalog.json"] = json.dumps({"m1.onnx": {"order": 1, "label": "Fast"}}).encode()
+        manifest = {"name": "npu-sr", "version": "1.0", "files": {n: {"sha256": hashlib.sha256(d).hexdigest()} for n, d in files.items()}}
+        if corrupt:
+            files["npu-sr-service"] = b"tampered"
+        path = self.root / "pkg.zip"
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("manifest.json", json.dumps(manifest))
+            for n, d in {**files, **(extra or {})}.items():
+                z.writestr(n, d)
+        return path
+
+    def test_import_installs_files_rewrites_layer_path_and_selects_first_model(self):
+        r = asyncio.run(self.p.import_npu_package(str(self.make_zip())))
+        self.assertEqual(r["status"], "success", r)
+        d = self.home / "AsusNPU/npu-sr"
+        self.assertTrue(os.access(d / "npu-sr-service", os.X_OK))
+        self.assertEqual(json.loads((d / "VkLayer_zz_npu_sr.json").read_text())["layer"]["library_path"],
+                         str(d / "libVkLayer_npu_sr.so"))
+        self.assertTrue((self.home / ".config/systemd/user/npu-sr.service").is_file())
+        self.assertIn("m1.onnx", (self.home / ".config/environment.d/npu-sr.conf").read_text())
+        self.assertIn(("daemon-reload",), self.calls)
+
+    def test_tampered_or_unlisted_files_are_rejected(self):
+        r = asyncio.run(self.p.import_npu_package(str(self.make_zip(corrupt=True))))
+        self.assertEqual(r["status"], "error")
+        self.assertIn("Checksum", r["message"])
+        r = asyncio.run(self.p.import_npu_package(str(self.make_zip(extra={"../evil.sh": b"x"}))))
+        self.assertEqual(r["status"], "error")
+        self.assertFalse((self.home / "AsusNPU/npu-sr").exists())
+
+    def test_not_a_zip(self):
+        bad = self.root / "x.zip"
+        bad.write_text("nope")
+        self.assertEqual(asyncio.run(self.p.import_npu_package(str(bad)))["message"], "Not a valid NPU package ZIP.")

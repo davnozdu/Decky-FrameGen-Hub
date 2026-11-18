@@ -75,6 +75,10 @@ export const getNpuSr = callable<[appid: string], NpuSrStatus>("get_npu_sr");
 export const setNpuSr = callable<[appid: string, enabled: boolean, current: string], PatchResult>("set_npu_sr");
 export const setNpuSrModel = callable<[model: string], Result>("set_npu_sr_model");
 export const setNpuCapture = callable<[enabled: boolean], Result>("set_npu_capture");
+export type NpuPackage = Result & { installed?: boolean; version?: string | null; models?: number; runtime_ok?: boolean;
+  runtime_missing?: string[]; layer_registered?: boolean; layer_command?: string; npu_device?: boolean; service?: string; home?: string };
+export const getNpuPackage = callable<[], NpuPackage>("get_npu_package");
+export const importNpuPackage = callable<[archive: string], NpuPackage>("import_npu_package");
 export const getGameStatus = callable<[appid: string], GameStatus>("get_game_status");
 export const patchGame = callable<
   [appid: string, current_launch_options: string, target_dir: string],
