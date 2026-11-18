@@ -1186,7 +1186,12 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
 
     async def get_game_status(self, appid: str) -> dict:
         try:
-            return await asyncio.to_thread(self._game_status, str(appid))
+            try:
+                return await asyncio.to_thread(self._game_status, str(appid))
+            except FileNotFoundError:
+                # A patch/unpatch was removing files while we read them: wait for it, then read again.
+                async with self._generator_lock():
+                    return await asyncio.to_thread(self._game_status, str(appid))
         except Exception as exc:
             decky.logger.error(f"[ANR] get_game_status {appid}: {exc}")
             return {"status": "error", "message": str(exc)}
