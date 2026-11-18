@@ -536,6 +536,14 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     try {
       const r = await getNpuSr(id);
       if (selectedApp.current === id) setNpu(r.status === "success" ? r : null);
+      // Games set up before the layer became opt-in lack NPU_SR_ENABLE=1: add it once, silently.
+      if (r.status === "success" && r.enabled && r.available) {
+        const current = await getLaunchOptions(Number(id));
+        if (!/(^|\s)NPU_SR_ENABLE=1(\s|$)/.test(current || "")) {
+          const n = await setNpuSr(id, true, current || "");
+          if (n.status === "success" && n.launch_options !== undefined) setLaunchOptions(Number(id), n.launch_options);
+        }
+      }
     } catch {
       if (selectedApp.current === id) setNpu(null);
     }

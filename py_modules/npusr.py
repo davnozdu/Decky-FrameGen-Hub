@@ -23,8 +23,10 @@ import decky
 NPUSR_UNIT = "npu-sr.service"
 # RADV's RDR2 profile turns on the APU unified heap, which hides the CPU-cached memory types the layer needs for
 # fast staging copies (~2.6 ms -> 0.1 ms per frame). Harmless for games without that profile.
-NPUSR_LAUNCH_ENV = "radv_enable_unified_heap_on_apu=false"
-_NPUSR_ENV_RE = re.compile(r"(?<!\S)radv_enable_unified_heap_on_apu=\S+\s*")
+# NPU_SR_ENABLE=1 loads the Vulkan layer into this game only: its manifest has enable_environment, so KWin, mpv,
+# Steam and other programs never get it (a global layer crashed KWin's device enumeration).
+NPUSR_LAUNCH_ENV = "NPU_SR_ENABLE=1 radv_enable_unified_heap_on_apu=false"
+_NPUSR_ENV_RE = re.compile(r"(?<!\S)(?:radv_enable_unified_heap_on_apu|NPU_SR_ENABLE)=\S+\s*")
 NPUSR_MANIFESTS = (
     Path("/usr/share/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
     Path("/etc/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
