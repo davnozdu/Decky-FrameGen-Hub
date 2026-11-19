@@ -1993,6 +1993,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
         values = self._upscaler_values(choice, watermark)
         if values:
             self._set_ini_sections(ini, values)
+        self._ensure_opti_no_caps(appid, ini)
         entry["upscaler"] = choice
         entry["upscaler_watermark"] = bool(watermark)
         entry["managed_files"] = managed
@@ -2216,6 +2217,8 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
         "dynamic_mfg": ("DLSSG", "OverrideForceDMFG", "bool", None),
         "dmfg_target": ("DLSSG", "FramerateTargetDMFG", "float", (0.0, 360.0)),
         "fps_limit": ("Framerate", "FramerateLimit", "float", (0.0, 360.0)),
+        "override_vsync": ("V-Sync", "OverrideVsync", "bool", None),
+        "force_vsync": ("V-Sync", "ForceVsync", "bool", None),
         "sharpness_override": ("Sharpness", "OverrideSharpness", "bool", None),
         "sharpness": ("Sharpness", "Sharpness", "float", (0.0, 1.3)),
         "show_fps": ("Menu", "ShowFps", "bool", None),
@@ -2266,6 +2269,24 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
         if not ini or not ini.exists():
             raise ValueError("OptiScaler.ini not found for this game.")
         return target, desc, ini
+
+    def _ensure_opti_no_caps(self, appid: str, ini: Path | None = None) -> None:
+        """Auto-disable OptiScaler FPS cap (unless explicitly set) and force in-game V-Sync off."""
+        try:
+            if ini is None:
+                _, _, ini = self._target_and_ini(str(appid))
+            if not ini or not ini.exists():
+                return
+            opti = (self._load_state()["games"].get(str(appid)) or {}).get("opti") or {}
+            vals = {
+                ("V-Sync", "OverrideVsync"): "true",
+                ("V-Sync", "ForceVsync"): "false",
+            }
+            if not opti.get("fps_limit"):
+                vals[("Framerate", "FramerateLimit")] = "auto"
+            self._set_ini_sections(ini, vals)
+        except Exception as exc:
+            decky.logger.debug(f"[ANR] _ensure_opti_no_caps {appid}: {exc}")
 
     def _apply_opti(self, appid: str, settings: dict[str, str]) -> None:
         target, desc, ini = self._target_and_ini(appid)
@@ -2409,6 +2430,7 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
             return {"status": "error", "message": str(exc)}
 
     def _reapply_upscaler(self, appid: str, target: Path) -> None:
+        self._ensure_opti_no_caps(appid)
         entry = self._load_state()["games"].get(appid, {})
         if entry.get("opti"):
             try:

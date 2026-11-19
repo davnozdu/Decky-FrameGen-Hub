@@ -127,7 +127,7 @@ class NpuSrMixin:
     @staticmethod
     def _npusr_is_x2(name: str) -> bool:
         """x2 models (1024x576 input, 16 sub-pixels) are named *x2_*; everything else is x1.5 (1280x720)."""
-        return "x2_" in name
+        return "x2_" in name or "x2g" in name
 
     def _npusr_models(self, x2: bool = False) -> list[dict]:
         """Selectable models: *.onnx in the models folder (sub-folders such as archive/ are ignored).
@@ -141,7 +141,7 @@ class NpuSrMixin:
         for path in sorted(folder.glob("*.onnx")):
             if self._npusr_is_x2(path.name) != x2:
                 continue
-            if "300x512" in path.name:  # 1024x600 twin of a 1024x576 x2 model: loaded with it automatically
+            if "300x512" in path.name or "270x480" in path.name:  # 1024x600 / 960x540 twins loaded automatically
                 continue
             info = catalog.get(path.name, {}) if isinstance(catalog, dict) else {}
             if info.get("hidden"):
@@ -418,6 +418,8 @@ class NpuSrMixin:
             if rc != 0:
                 decky.logger.error(f"[NPU-SR] enable service: {out}")
                 return {"status": "error", "message": "NPU service did not start. See the plugin log."}
+            if hasattr(self, "_ensure_opti_no_caps"):
+                self._ensure_opti_no_caps(appid)
             decky.logger.info(f"[NPU-SR] enabled for {appid}")
             return {"status": "success",
                     "message": "NPU upscaling enabled. Set the game to 1280×720; it applies on the next game start."}
