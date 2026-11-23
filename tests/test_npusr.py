@@ -57,7 +57,15 @@ class NpuSr(unittest.TestCase):
         self.assertEqual(self.apps(), ["1174180", "1"])
         asyncio.run(self.p.set_npu_sr("1", False))
         self.assertEqual(self.apps(), ["1174180"])
-        self.assertEqual({p: p.read_bytes() for p in self.game.rglob("*") if p.is_file()}, before)
+        after = {p: p.read_bytes() for p in self.game.rglob("*") if p.is_file()}
+        self.assertEqual(after.keys(), before.keys())
+        # Only an existing OptiScaler.ini is touched: in-game V-Sync off and no OptiScaler FPS cap.
+        changed = [p for p in after if after[p] != before[p]]
+        self.assertTrue(all(p.name == "OptiScaler.ini" for p in changed), changed)
+        for p in changed:
+            ini = p.read_text()
+            self.assertIn("ForceVsync=false", ini)
+            self.assertIn("OverrideVsync=true", ini)
 
     def test_live_stats_only_for_a_running_process(self):
         self.install()
@@ -176,9 +184,6 @@ class UpscalerOff(unittest.TestCase):
         self.assertIn("off", self.p.UPSCALERS)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class NpuPackage(unittest.TestCase):
     """Private NPU package ZIP: verified by SHA-256, only listed files, installed under ~/AsusNPU/npu-sr."""
@@ -261,3 +266,84 @@ class NpuX2Models(unittest.TestCase):
         st = asyncio.run(self.p.get_npu_sr("1"))
         self.assertEqual(st["model_x2"], "c32l6x2_qat_s2d_288x512x4_u8.onnx")
         self.assertEqual(st["model"], "c16l4g3_qat_s2d_360x640x4_u8.onnx")
+
+
+class NpuPackageDownload(unittest.TestCase):
+    """Owner-only download from a private GitHub repo: opt-in via two config files, SHA-256 checked, then imported."""
+
+    def setUp(self):
+        NpuSr.setUp(self)
+        self.zip_bytes = NpuPackage.make_zip(self).read_bytes()
+        import hashlib
+        self.sha = hashlib.sha256(self.zip_bytes).hexdigest()
+        self.requests = []
+
+    def configure(self):
+        cfg = self.home / ".config/npu-sr"
+        cfg.mkdir(parents=True, exist_ok=True)
+        (cfg / "package-repo").write_text("owner/npu-sr\n")
+        (cfg / "github-token").write_text("tok123\n")
+
+    def fake_gh(self, sha=None):
+        releases = [
+            {"draft": True, "tag_name": "v9", "assets": [{"name": "npu-sr-package-9.zip", "url": "u-draft"}]},
+            {"draft": False, "tag_name": "v2026.11.23", "assets": [
+                {"name": "npu-sr-package-2026.11.23.zip", "url": "u-zip", "size": len(self.zip_bytes)},
+                {"name": "npu-sr-package-2026.11.23.sha256", "url": "u-sha"}]},
+        ]
+
+        def gh(url, token, accept):
+            self.requests.append((url, token))
+            if url.endswith("/releases?per_page=10"):
+                self.assertIn("/repos/owner/npu-sr/", url)
+                return json.dumps(releases).encode()
+            if url == "u-zip":
+                return self.zip_bytes
+            if url == "u-sha":
+                return f"{sha or self.sha}  npu-sr-package-2026.11.23.zip\n".encode()
+            raise AssertionError(url)
+        self.p._npusr_gh_get = gh
+
+    def test_not_configured_means_no_network_and_no_button(self):
+        self.p._npusr_gh_get = lambda *a: self.fail("network used without configuration")
+        st = asyncio.run(self.p.check_npu_package_update())
+        self.assertEqual(st, {"status": "success", "configured": False})
+        self.p._npusr_autoinstall()
+        self.assertFalse((self.home / "AsusNPU/npu-sr").exists())
+
+    def test_download_picks_newest_non_draft_release_and_imports(self):
+        self.configure()
+        self.fake_gh()
+        st = asyncio.run(self.p.check_npu_package_update())
+        self.assertEqual((st["latest"], st["update"]), ("2026.11.23", True))
+        r = asyncio.run(self.p.download_npu_package())
+        self.assertEqual(r["status"], "success", r)
+        self.assertTrue((self.home / "AsusNPU/npu-sr/npu-sr-service").is_file())
+        self.assertTrue(all(tok == "tok123" for _, tok in self.requests))
+        self.assertEqual(list((self.home / "AsusNPU/npu-sr").glob(".download-*")), [])
+
+    def test_checksum_mismatch_is_rejected(self):
+        self.configure()
+        self.fake_gh(sha="0" * 64)
+        r = asyncio.run(self.p.download_npu_package())
+        self.assertEqual(r["status"], "error")
+        self.assertIn("SHA-256", r["message"])
+        self.assertFalse((self.home / "AsusNPU/npu-sr/npu-sr-service").exists())
+
+    def test_autoinstall_only_on_fresh_install(self):
+        self.configure()
+        self.fake_gh()
+        self.p._npusr_autoinstall()
+        self.assertTrue((self.home / "AsusNPU/npu-sr/npu-sr-service").is_file())
+        self.requests.clear()
+        self.p._npusr_autoinstall()  # installed now: no network
+        self.assertEqual(self.requests, [])
+
+    def test_bad_repo_or_token_file_disables_the_source(self):
+        self.configure()
+        (self.home / ".config/npu-sr/package-repo").write_text("not a repo")
+        self.assertIsNone(self.p._npusr_remote_config())
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -70,9 +70,13 @@ import {
   setNpuSrModel,
   setNpuCapture,
   setNpuSharpness,
+  setNpuAa,
   getNpuPackage,
   importNpuPackage,
   NpuPackage,
+  checkNpuPackageUpdate,
+  downloadNpuPackage,
+  NpuPackageUpdate,
   type NpuSrStatus,
 } from "./api";
 import { registerFocusRoot, withSettingFocus, openMenuWithFocus } from "./focus";
@@ -567,6 +571,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const r = await setNpuSharpness(v);
     if (r.status !== "success") toast(r.message || r.status);
   };
+  const changeNpuAa = async (v: number) => {
+    setNpu((cur) => cur ? { ...cur, aa: v } : cur);
+    const r = await setNpuAa(v);
+    if (r.status !== "success") toast(r.message || r.status);
+  };
   const changeNpuCapture = withSettingFocus(async (on: boolean) => {
     const r = await setNpuCapture(on);
     toast(r.message || r.status);
@@ -981,14 +990,20 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                     onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
                 </PanelSectionRow>
               )}
-              {npu.available && npu.enabled && (
+              {npu.available && npu.enabled && (<>
                 <PanelSectionRow>
                   <SliderField label={t("NPU sharpness")} value={npu.sharpness ?? 0} min={0} max={1} step={0.1}
                     showValue notchCount={11} notchTicksVisible={false}
                     description={t("Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.")}
                     onChange={(v: number) => void changeNpuSharpness(Math.round(v * 10) / 10)} />
                 </PanelSectionRow>
-              )}
+                <PanelSectionRow>
+                  <SliderField label={t("NPU anti-aliasing")} value={npu.aa ?? 1} min={0} max={1} step={0.1}
+                    showValue notchCount={11} notchTicksVisible={false}
+                    description={t("Smooths stair-steps along long edges after the NPU; HUD text stays crisp. 0 = off. Applies to a running game within a second.")}
+                    onChange={(v: number) => void changeNpuAa(Math.round(v * 10) / 10)} />
+                </PanelSectionRow>
+              </>)}
               {npuLine && <PanelSectionRow><div style={small}>{npuLine}</div></PanelSectionRow>}
             </>
           )}
@@ -1877,10 +1892,26 @@ function Fsr4Libraries({ onImported }: { onImported: () => void }) {
 function NpuPackageSection({ onImported }: { onImported: () => void }) {
   const [pkg, setPkg] = useState<NpuPackage | null>(null);
   const [busy, setBusy] = useState(false);
+  const [remote, setRemote] = useState<NpuPackageUpdate | null>(null);
   const load = useCallback(async () => {
     try { setPkg(await getNpuPackage()); } catch (e) { toast(errorText(e)); }
   }, []);
   useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void checkNpuPackageUpdate().then(setRemote).catch(() => setRemote(null));
+  }, []);
+  const download = async () => {
+    setBusy(true);
+    try {
+      const r = await downloadNpuPackage();
+      toast(r.message || r.status);
+      if (r.status === "success") {
+        await load(); onImported();
+        setRemote(await checkNpuPackageUpdate());
+      }
+    } catch (e) { toast(errorText(e)); }
+    finally { setBusy(false); }
+  };
   const importZip = async () => {
     let path: string;
     try {
@@ -1912,6 +1943,18 @@ function NpuPackageSection({ onImported }: { onImported: () => void }) {
       )}
       {pkg?.installed && !pkg.layer_registered && (
         <PanelSectionRow><div style={warn}>{t("One-time step: in Desktop Mode open Konsole and run")}{" "}<code>{pkg.layer_command}</code></div></PanelSectionRow>
+      )}
+      {remote?.configured && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={busy || !remote.latest} onClick={() => void download()}
+            description={remote.status === "error" ? remote.message
+              : remote.latest ? (remote.update ? t("Private source: version {0} is available.", remote.latest)
+                : t("Private source: {0} is the newest version.", remote.latest))
+              : t("Private source: no NPU package release found.")}>
+            {busy ? t("Downloading…") : remote.update ? t("Download and install {0}", remote.latest ?? "")
+              : t("Reinstall from the private source")}
+          </ButtonItem>
+        </PanelSectionRow>
       )}
       <PanelSectionRow>
         <ButtonItem layout="below" disabled={busy} onClick={() => void importZip()}

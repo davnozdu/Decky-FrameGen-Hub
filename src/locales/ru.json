@@ -565,5 +565,12 @@
   "NPU model for 1024×576 (×2)": "Модель NPU для 1024×576 (×2)",
   "Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.": "Включается сама, когда игра идёт в 1024×576 (разрешение игры в Steam): видеокарта рисует на 36% меньше пикселей, чем в 720p, а NPU растягивает вдвое.",
   "NPU sharpness": "Резкость NPU",
-  "Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.": "Дополнительная чёткость краёв и текстур после NPU, без ореолов. 0 — выкл. В запущенной игре меняется за секунду."
+  "Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.": "Дополнительная чёткость краёв и текстур после NPU, без ореолов. 0 — выкл. В запущенной игре меняется за секунду.",
+  "Private source: version {0} is available.": "Личный источник: доступна версия {0}.",
+  "Private source: {0} is the newest version.": "Личный источник: {0} — последняя версия.",
+  "Private source: no NPU package release found.": "Личный источник: релиз с пакетом NPU не найден.",
+  "Download and install {0}": "Скачать и установить {0}",
+  "Reinstall from the private source": "Переустановить из личного источника",
+  "NPU anti-aliasing": "Сглаживание NPU (AA)",
+  "Smooths stair-steps along long edges after the NPU; HUD text stays crisp. 0 = off. Applies to a running game within a second.": "Убирает «лесенку» на длинных краях после NPU, текст интерфейса остаётся чётким. 0 — выкл. В запущенной игре меняется за секунду."
 }

@@ -4,7 +4,8 @@ The layer (~/AsusNPU/npu-sr) is an implicit Vulkan layer that is inert unless th
 listed in ~/.config/npu-sr/enabled-apps. It takes the game's 1280x720 swapchain, sends luma to the NPU
 service and presents 1920x1080. The list is read when the game creates its Vulkan device, so changes
 apply on the next game start. This mixin only manages that list and the service; it never touches
-game files, so it combines with OptiScaler/FSR 4 (render below 720p, FSR to 720p, NPU to 1080p).
+game files except an existing OptiScaler.ini (in-game V-Sync off, no OptiScaler FPS cap), so it combines with
+OptiScaler/FSR 4 (render below 720p, FSR to 720p, NPU to 1080p).
 """
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ import os
 import re
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -39,6 +42,23 @@ NPUSR_PACKAGE_FILES = ("libVkLayer_npu_sr.so", "npu-sr-service", "run-service.sh
 NPUSR_EXECUTABLES = {"npu-sr-service", "run-service.sh", "runtime.sh", "install-layer.sh"}
 _NPUSR_MEMBER_RE = re.compile(r"^(?:models/)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 NPUSR_PACKAGE_MAX = 64 * 1024 * 1024
+# Optional download of the owner's own package from a PRIVATE GitHub repo: only when the user created
+# ~/.config/npu-sr/package-repo ("owner/repo") and ~/.config/npu-sr/github-token (a read-only token).
+# Nothing is configured by the plugin itself, so for everyone else the package stays a manual ZIP import.
+NPUSR_ASSET_RE = re.compile(r"^npu-sr-package-([0-9A-Za-z._-]+)\.zip$")
+_NPUSR_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+NPUSR_USER_AGENT = "decky-framegen-hub-npu"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def _version_key(version: str) -> tuple:
+    return tuple(int(p) if p.isdigit() else p for p in re.split(r"[.-]", version or ""))
+
+
 # AMD Ryzen AI 1.9 runtime + XRT are not redistributable: the user installs them under ~/AsusNPU.
 NPUSR_RUNTIME_DIRS = ("runtime-1.9", "xrt-1.9", "sesr-env", "ubuntu-compat")
 
@@ -127,7 +147,7 @@ class NpuSrMixin:
     @staticmethod
     def _npusr_is_x2(name: str) -> bool:
         """x2 models (1024x576 input, 16 sub-pixels) are named *x2_*; everything else is x1.5 (1280x720)."""
-        return "x2_" in name
+        return "x2_" in name or "x2g" in name
 
     def _npusr_models(self, x2: bool = False) -> list[dict]:
         """Selectable models: *.onnx in the models folder (sub-folders such as archive/ are ignored).
@@ -141,7 +161,7 @@ class NpuSrMixin:
         for path in sorted(folder.glob("*.onnx")):
             if self._npusr_is_x2(path.name) != x2:
                 continue
-            if "300x512" in path.name:  # 1024x600 twin of a 1024x576 x2 model: loaded with it automatically
+            if "300x512" in path.name or "270x480" in path.name:  # 1024x600 / 960x540 twins loaded automatically
                 continue
             info = catalog.get(path.name, {}) if isinstance(catalog, dict) else {}
             if info.get("hidden"):
@@ -208,6 +228,7 @@ class NpuSrMixin:
             "models": self._npusr_models(),
             "model_x2": self._npusr_model("NPU_SR_MODEL_X2"),
             "sharpness": self._npusr_sharpness(),
+            "aa": self._npusr_aa(),
             "models_x2": self._npusr_models(x2=True),
             "live": self._npusr_live(),
             "capture": self._npusr_capture_state(),
@@ -318,6 +339,121 @@ class NpuSrMixin:
         decky.logger.info(f"[NPU-SR] package {manifest.get('version')} imported")
         return {"status": "success", "message": msg, **{k: v for k, v in state.items() if k != "status"}}
 
+    # ── Owner download from a private GitHub repo (opt-in via two files) ──────
+
+    def _npusr_remote_config(self) -> tuple[str, str] | None:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or str(self._home() / ".config")) / "npu-sr"
+        try:
+            repo = (base / "package-repo").read_text(encoding="utf-8").strip()
+            token = (base / "github-token").read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        if not _NPUSR_REPO_RE.match(repo) or not token or any(c.isspace() for c in token):
+            return None
+        return repo, token
+
+    def _npusr_gh_get(self, url: str, token: str, accept: str) -> bytes:
+        """GitHub API GET with the token. Release assets answer with a redirect to signed storage, which must be
+        fetched WITHOUT the Authorization header (the storage rejects a second auth mechanism)."""
+        headers = {"User-Agent": NPUSR_USER_AGENT, "Accept": accept, "Authorization": f"Bearer {token}",
+                   "X-GitHub-Api-Version": "2022-11-28"}
+        ctx = self._ssl_context()
+        opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ctx))
+        try:
+            with opener.open(urllib.request.Request(url, headers=headers), timeout=60) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            location = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else None
+            if not location:
+                if exc.code in (401, 403, 404):
+                    raise RuntimeError(f"GitHub refused the NPU package request ({exc.code}): check "
+                                       "~/.config/npu-sr/package-repo and github-token.") from exc
+                raise
+        req = urllib.request.Request(location, headers={"User-Agent": NPUSR_USER_AGENT})
+        with urllib.request.urlopen(req, timeout=300, context=ctx) as resp:
+            return resp.read(NPUSR_PACKAGE_MAX + 1)
+
+    def _npusr_remote_latest(self) -> dict | None:
+        """Newest non-draft release (pre-releases included) that carries npu-sr-package-*.zip and its .sha256."""
+        cfg = self._npusr_remote_config()
+        if not cfg:
+            return None
+        repo, token = cfg
+        releases = json.loads(self._npusr_gh_get(f"https://api.github.com/repos/{repo}/releases?per_page=10", token,
+                                                 "application/vnd.github+json"))
+        for rel in releases:
+            if rel.get("draft"):
+                continue
+            assets = {a.get("name"): a for a in rel.get("assets") or []}
+            for name, asset in assets.items():
+                m = NPUSR_ASSET_RE.match(name or "")
+                if not m:
+                    continue
+                sha = assets.get(name[:-4] + ".sha256") or assets.get(name + ".sha256")
+                if sha:
+                    return {"version": m.group(1), "tag": rel.get("tag_name"), "zip_url": asset["url"],
+                            "sha_url": sha["url"], "size": asset.get("size") or 0}
+        return None
+
+    def _npusr_update_state(self) -> dict:
+        if not self._npusr_remote_config():
+            return {"status": "success", "configured": False}
+        latest = self._npusr_remote_latest()
+        installed = self._npusr_package_state()
+        current = installed.get("version") if installed.get("installed") else None
+        newer = bool(latest) and (not current or current == "local build"
+                                  or _version_key(latest["version"]) > _version_key(current))
+        return {"status": "success", "configured": True, "latest": latest["version"] if latest else None,
+                "current": current, "update": newer}
+
+    def _npusr_download_package(self) -> dict:
+        cfg = self._npusr_remote_config()
+        if not cfg:
+            raise ValueError("No private package source configured (~/.config/npu-sr/package-repo, github-token).")
+        latest = self._npusr_remote_latest()
+        if not latest:
+            raise ValueError("No release with an npu-sr package (.zip + .sha256) found.")
+        if latest["size"] > NPUSR_PACKAGE_MAX:
+            raise ValueError("The NPU package is too large (over 64 MB).")
+        token = cfg[1]
+        data = self._npusr_gh_get(latest["zip_url"], token, "application/octet-stream")
+        expected = self._npusr_gh_get(latest["sha_url"], token, "application/octet-stream").decode("ascii", "replace")
+        expected = (expected.split() or [""])[0].lower()
+        if len(data) > NPUSR_PACKAGE_MAX or hashlib.sha256(data).hexdigest() != expected:
+            raise ValueError("Downloaded NPU package failed the SHA-256 check.")
+        dest = self._npusr_dir()
+        dest.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".download-", suffix=".zip", dir=dest)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            result = self._npusr_import_package(tmp)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+        decky.logger.info(f"[NPU-SR] package {latest['version']} downloaded from {cfg[0]} ({latest['tag']})")
+        return result
+
+    def _npusr_autoinstall(self) -> None:
+        """Fresh install: when the owner configured a private source and no package is installed yet, fetch it."""
+        if not self._npusr_remote_config() or self._npusr_package_state()["installed"]:
+            return
+        self._npusr_download_package()
+
+    async def check_npu_package_update(self) -> dict:
+        try:
+            return await asyncio.to_thread(self._npusr_update_state)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "message": str(exc), "configured": True}
+
+    async def download_npu_package(self) -> dict:
+        try:
+            return await asyncio.to_thread(self._npusr_download_package)
+        except (zipfile.BadZipFile, json.JSONDecodeError):
+            return {"status": "error", "message": "The downloaded NPU package is not a valid ZIP."}
+        except Exception as exc:  # noqa: BLE001
+            decky.logger.error(f"[NPU-SR] package download: {exc}")
+            return {"status": "error", "message": str(exc)}
+
     async def get_npu_package(self) -> dict:
         try:
             return await asyncio.to_thread(self._npusr_package_state)
@@ -352,6 +488,28 @@ class NpuSrMixin:
             tmp.write_text(f"{v}\n", encoding="utf-8")
             os.replace(tmp, f)
             return {"status": "success", "sharpness": v}
+        except (OSError, ValueError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def _npusr_aa_file(self) -> Path:
+        return self._home() / ".config" / "npu-sr" / "aa"
+
+    def _npusr_aa(self) -> float:
+        try:
+            return max(0.0, min(1.0, float(self._npusr_aa_file().read_text().split()[0])))
+        except (OSError, ValueError, IndexError):
+            return 1.0  # the layer's default: FXAA-style edge AA, text-safe
+
+    async def set_npu_aa(self, value: float) -> dict:
+        """Edge anti-aliasing after the NPU (0 = off .. 1, layer default 1); a running game picks it up within a second."""
+        try:
+            v = max(0.0, min(1.0, round(float(value), 2)))
+            f = self._npusr_aa_file()
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(f"{v}\n", encoding="utf-8")
+            os.replace(tmp, f)
+            return {"status": "success", "aa": v}
         except (OSError, ValueError) as exc:
             return {"status": "error", "message": str(exc)}
 
@@ -418,6 +576,8 @@ class NpuSrMixin:
             if rc != 0:
                 decky.logger.error(f"[NPU-SR] enable service: {out}")
                 return {"status": "error", "message": "NPU service did not start. See the plugin log."}
+            if hasattr(self, "_ensure_opti_no_caps"):
+                self._ensure_opti_no_caps(appid)
             decky.logger.info(f"[NPU-SR] enabled for {appid}")
             return {"status": "success",
                     "message": "NPU upscaling enabled. Set the game to 1280×720; it applies on the next game start."}
