@@ -1,10 +1,31 @@
 # Decky FrameGen Hub
 
-*Formerly **Decky ANR**.* Choose the frame generator for each game — **ANR FG** (Apex Neural Rendering) or
-**XeFG** (Intel XeSS frame generation via the XMX port) — with OptiScaler upscalers and per-game profiles.
-Updating from Decky ANR keeps your game profiles; the plugin then offers to remove the old one.
+*Formerly **Decky ANR**.* Per-game upscaling and frame generation hub for SteamOS / Linux handhelds:
+**Ryzen AI NPU-SR + NPU-FlowNet v2**, **Lossless Scaling (`lsfg-vk`)**, **ANR FG** (Apex Neural Rendering),
+**XeFG** (Intel XeSS XMX port), and **OptiScaler / FSR 4 Lite** — with autonomous first-run setup and offline bundle restore.
 
 **Инструкция на русском: [README.ru.md](README.ru.md).**
+
+## What's new in `v0.2.9-nsl.16` + `npu-sr v2026.11.24`
+
+- **Ryzen AI NPU Upscaler + Async Frame Generation (Z2 Extreme / Strix Point `AIE2P`)**:
+  - **7 curated DC-normalized INT8 models** (`0.0` flat-surface spread, no floor blockiness):
+    - `720p→1080p`: `c40l10g8` (default, Best Quality + De-alias, `~8.8 ms`), `c32l12g7` (Fast + De-alias, `~6.8 ms`), `c32l6g6` (Ultra-Fast, `~6.4 ms`).
+    - `×2` (`540p/576p/600p→1080p/1200p`): `c48l6x2g6` (`~6.3 ms`).
+    - `NPU-FlowNet v2` (`npu_flow_320x192_u8.onnx`, `~1.0–1.36 ms` optical flow on NPU).
+  - **Live controls (apply within 1 second in a running game)**: NPU Sharpness (`0–1`), text-safe NPU Anti-Aliasing (`0–1`), Async Frame Generation (`Off (1×)` / `Auto` / `2×` / `3×` with automatic `GAMESCOPE_FPS_LIMIT` coordination), and optical flow engine selector (`NPU FlowNet v2` / `CPU`).
+  - **Zero-Stall Present** (`present_npu_wait_ms ≈ 0.001 ms`) and strict 3D-only `vkCreateSampler` LOD bias.
+- **Autonomous Setup & Offline Restore (No Desktop Mode / No `sudo`)**:
+  - Registers `VkLayer_zz_npu_sr.json` automatically in `~/.local/share/vulkan/implicit_layer.d/` and enables `npu-sr.service` via `systemctl --user`.
+  - **Offline-first bootstrap**: drop your personal `FrameGen-Hub-Full-Bundle-*.zip` into `~/Downloads/` and the plugin restores NPU-SR + models, FSR 4, and Lossless Scaling automatically (or in 1 click under *Libraries and updates*).
+  - **Online fallback**: on Ryzen AI devices (`/dev/accel`), automatically downloads `npu-sr-package-*.zip` from this repository's Releases with SHA-256 verification and cleans up obsolete `.onnx` models.
+
+| Generator | Pick it for | Forza Horizon 6, ROG Xbox Ally X, 2X |
+|---|---|---|
+| **NPU-SR + NPU-FlowNet v2** | Zero GPU FG overhead, NPU upscaling + AA + Auto 2×/3× (Ryzen AI) | **~86–90 FPS** (`1.3 ms` NPU flow, `0.0 ms` wait) |
+| Lossless Scaling (lsfg-vk) | most FPS, best responsiveness, any game | ~93 FPS shown |
+| XeFG | cleanest image (DX12, DLSS FG games) | ~73 |
+| ANR FG | Apex's neural FG, updated often | ~71 |
 
 ## Quick start
 

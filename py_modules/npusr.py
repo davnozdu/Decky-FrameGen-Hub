@@ -31,7 +31,7 @@ NPUSR_MANIFESTS = (
     Path("/usr/share/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
     Path("/etc/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
 )
-NPUSR_RELEASES_API = "https://api.github.com/repos/davnozdu/npu-sr/releases?per_page=5"
+NPUSR_RELEASES_API = "https://api.github.com/repos/davnozdu/Decky-FrameGen-Hub/releases?per_page=5"
 
 
 # Private NPU package (ZIP the user prepares; it is never downloaded): manifest.json + these files.

@@ -1,17 +1,32 @@
 # Decky FrameGen Hub — инструкция
 
-Плагин для [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader): генерация кадров в играх под Proton
-на Steam Deck, ROG Ally и других Linux-портативках (SteamOS, Bazzite, CachyOS Handheld). Для каждой игры можно выбрать
-свой генератор и свой профиль настроек.
+Плагин для [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader): апскейлинг и генерация кадров в играх под Proton
+на ROG Xbox Ally X (Ryzen AI NPU), Steam Deck и других Linux-портативках (SteamOS, Bazzite, CachyOS Handheld).
+Для каждой игры выбирается свой генератор, апскейлер и профиль настроек.
+
+## Новое в `v0.2.9-nsl.16` + `npu-sr v2026.11.24`
+
+- **NPU-апскейлер и асинхронный генератор кадров (Ryzen AI Z2 Extreme / `AIE2P`)**:
+  - **7 лучших DC-нормализованных INT8-моделей** (без квадратов на полу, разброс `0.0`):
+    - `720p→1080p`: `c40l10g8` (по умолчанию, Best Quality + De-alias, `~8.8 мс`), `c32l12g7` (Fast + De-alias, `~6.8 мс`), `c32l6g6` (Ultra-Fast, `~6.4 мс`).
+    - `×2` (`540p/576p/600p→1080p/1200p`): `c48l6x2g6` (`~6.3 мс`).
+    - `NPU-FlowNet v2` (`npu_flow_320x192_u8.onnx`, оптический поток `~1.0–1.36 мс` прямо на NPU).
+  - **Настройки на лету (применяются за 1 секунду в запущенной игре)**: Резкость NPU (`0–1`), текстобезопасное сглаживание NPU AA (`0–1`), Генератор кадров (`Выкл. (1×)` / `Авто` / `2×` / `3×` с автоуправлением `GAMESCOPE_FPS_LIMIT`) и выбор движка потока (`NPU FlowNet v2` / `Процессор`).
+  - **Zero-Stall Present** (`present_npu_wait_ms ≈ 0.001 мс`) и исправленный 3D-only `vkCreateSampler` LOD bias.
+- **Автономная установка и восстановление в 1 клик (без Desktop Mode и `sudo`)**:
+  - Слой `VkLayer_zz_npu_sr.json` регистрируется сам в `~/.local/share/vulkan/implicit_layer.d/`, а `npu-sr.service` включается автоматически через `systemctl --user`.
+  - **Оффлайн-приоритет**: положите личный `FrameGen-Hub-Full-Bundle-*.zip` в `~/Downloads/` — плагин сам восстановит NPU-SR с моделями, FSR 4 и Lossless Scaling без интернета (или в 1 клик в разделе «Библиотеки и обновления»).
+  - **Автоскачивание онлайн**: на устройствах с Ryzen AI NPU (`/dev/accel`) плагин сам скачивает `npu-sr-package-*.zip` из релизов этого репозитория с проверкой `SHA-256` и автоочисткой старых моделей.
 
 | Генератор | Когда выбирать | Что нужно |
 |---|---|---|
+| **NPU-SR + NPU-FlowNet v2** | Апскейлинг + сглаживание + Auto 2×/3× без нагрузки на GPU | Портативка с Ryzen AI NPU (`/dev/accel`) |
 | **Lossless Scaling (lsfg-vk)** | Максимум FPS и лучший отклик; работает в **любой** игре | Своя купленная Lossless Scaling в Steam, ветка **lsfg-vk** |
 | **XeFG** | Самая чистая картинка | Игра на DirectX 12 с DLSS Frame Generation |
 | **ANR FG** | Нейросетевой генератор Apex, развивается почти каждый день | Игра с DLSS Frame Generation |
 
-Замер на ROG Xbox Ally X (Radeon 890M), Forza Horizon 6, FSR 4 Balanced, 2X:
-**Lossless Scaling ~93 FPS**, XeFG ~73, ANR FG ~71 (FPS на экране).
+Замер на ROG Xbox Ally X (Radeon 890M + Ryzen AI NPU), Forza Horizon 6, 2X:
+**NPU-SR (`c40l10g8`) + NPU-FlowNet v2 ~86–90 FPS** (`1.3 мс` поток, `0.0 мс` ожидание), **Lossless Scaling ~93 FPS**, XeFG ~73, ANR FG ~71 (FPS на экране).
 
 ---
 
