@@ -55,7 +55,7 @@ export type NpuSrLive = { in?: string; out?: string; frames?: number; npu_frames
   npu_ms?: number; connected?: boolean };
 export type NpuSrModel = { file: string; label: string; note?: string };
 export type NpuSrStatus = Result & { available?: boolean; missing?: string[]; enabled?: boolean; service?: string;
-  model?: string | null; models?: NpuSrModel[]; model_x2?: string | null; models_x2?: NpuSrModel[]; sharpness?: number; live?: NpuSrLive | null;
+  model?: string | null; models?: NpuSrModel[]; model_x2?: string | null; models_x2?: NpuSrModel[]; sharpness?: number; aa?: number; fg?: number; fg_engine?: string; live?: NpuSrLive | null;
   capture?: { available?: boolean; active?: boolean; frames?: number } };
 
 export type PatchResult = Result & { launch_options?: string; mode?: string; proxy?: string | null };
@@ -76,6 +76,9 @@ export const setNpuSr = callable<[appid: string, enabled: boolean, current: stri
 export const setNpuSrModel = callable<[model: string], Result>("set_npu_sr_model");
 export const setNpuCapture = callable<[enabled: boolean], Result>("set_npu_capture");
 export const setNpuSharpness = callable<[value: number], Result>("set_npu_sharpness");
+export const setNpuAa = callable<[value: number], Result>("set_npu_aa");
+export const setNpuFg = callable<[value: number], Result>("set_npu_fg");
+export const setNpuFgEngine = callable<[engine: string], Result>("set_npu_fg_engine");
 export type NpuPackage = Result & { installed?: boolean; version?: string | null; models?: number; runtime_ok?: boolean;
   runtime_missing?: string[]; layer_registered?: boolean; layer_command?: string; npu_device?: boolean; service?: string; home?: string };
 export const getNpuPackage = callable<[], NpuPackage>("get_npu_package");

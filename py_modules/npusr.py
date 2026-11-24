@@ -139,6 +139,8 @@ class NpuSrMixin:
             catalog = {}
         models = []
         for path in sorted(folder.glob("*.onnx")):
+            if "flow" in path.name.lower():
+                continue
             if self._npusr_is_x2(path.name) != x2:
                 continue
             if "300x512" in path.name or "270x480" in path.name:  # 1024x600 / 960x540 twins loaded automatically
@@ -208,6 +210,9 @@ class NpuSrMixin:
             "models": self._npusr_models(),
             "model_x2": self._npusr_model("NPU_SR_MODEL_X2"),
             "sharpness": self._npusr_sharpness(),
+            "aa": self._npusr_aa(),
+            "fg": self._npusr_fg(),
+            "fg_engine": self._npusr_fg_engine(),
             "models_x2": self._npusr_models(x2=True),
             "live": self._npusr_live(),
             "capture": self._npusr_capture_state(),
@@ -352,6 +357,79 @@ class NpuSrMixin:
             tmp.write_text(f"{v}\n", encoding="utf-8")
             os.replace(tmp, f)
             return {"status": "success", "sharpness": v}
+        except (OSError, ValueError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def _npusr_aa_file(self) -> Path:
+        return self._home() / ".config" / "npu-sr" / "aa"
+
+    def _npusr_aa(self) -> float:
+        try:
+            return max(0.0, min(1.0, float(self._npusr_aa_file().read_text().split()[0])))
+        except (OSError, ValueError, IndexError):
+            return 0.5
+
+    async def set_npu_aa(self, value: float) -> dict:
+        """Directional edge anti-aliasing after the NPU (0 = off .. 1); a running game picks it up within a second."""
+        try:
+            v = max(0.0, min(1.0, round(float(value), 2)))
+            f = self._npusr_aa_file()
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(f"{v}\n", encoding="utf-8")
+            os.replace(tmp, f)
+            return {"status": "success", "aa": v}
+        except (OSError, ValueError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def _npusr_fg_file(self) -> Path:
+        return self._home() / ".config" / "npu-sr" / "fg"
+
+    def _npusr_fg(self) -> int:
+        try:
+            tok = self._npusr_fg_file().read_text().split()[0].strip().lower()
+            if tok.startswith("auto"):
+                return 0
+            return max(0, min(3, int(round(float(tok)))))
+        except (OSError, ValueError, IndexError):
+            return 1
+
+    async def set_npu_fg(self, value: int) -> dict:
+        """Async Frame Generation mode (0 = auto, 1 = off, 2 = x2, 3 = x3); applies within a second."""
+        try:
+            if isinstance(value, str) and value.strip().lower().startswith("auto"):
+                v = 0
+            else:
+                v = max(0, min(3, int(round(float(value)))))
+            f = self._npusr_fg_file()
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text("auto\n" if v == 0 else f"{v}\n", encoding="utf-8")
+            os.replace(tmp, f)
+            return {"status": "success", "fg": v}
+        except (OSError, ValueError) as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def _npusr_fg_engine_file(self) -> Path:
+        return self._home() / ".config" / "npu-sr" / "fg-engine"
+
+    def _npusr_fg_engine(self) -> str:
+        try:
+            v = self._npusr_fg_engine_file().read_text().strip().lower()
+            return "cpu" if v == "cpu" else "npu"
+        except OSError:
+            return "npu"
+
+    async def set_npu_fg_engine(self, engine: str) -> dict:
+        """Choose optical flow engine for Frame Generation: 'npu' (FlowNet v2, default) or 'cpu' (block-matching)."""
+        try:
+            v = "cpu" if str(engine).lower() == "cpu" else "npu"
+            f = self._npusr_fg_engine_file()
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(f"{v}\n", encoding="utf-8")
+            os.replace(tmp, f)
+            return {"status": "success", "fg_engine": v}
         except (OSError, ValueError) as exc:
             return {"status": "error", "message": str(exc)}
 

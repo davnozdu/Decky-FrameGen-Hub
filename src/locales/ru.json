@@ -565,5 +565,15 @@
   "NPU model for 1024×576 (×2)": "Модель NPU для 1024×576 (×2)",
   "Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.": "Включается сама, когда игра идёт в 1024×576 (разрешение игры в Steam): видеокарта рисует на 36% меньше пикселей, чем в 720p, а NPU растягивает вдвое.",
   "NPU sharpness": "Резкость NPU",
-  "Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.": "Дополнительная чёткость краёв и текстур после NPU, без ореолов. 0 — выкл. В запущенной игре меняется за секунду."
+  "Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.": "Дополнительная чёткость краёв и текстур после NPU, без ореолов. 0 — выкл. В запущенной игре меняется за секунду.",
+  "NPU anti-aliasing": "Сглаживание NPU (AA)",
+  "Directional edge smoothing (removes stair-steps on diagonal edges without blurring textures). 0 = off. Applies within a second.": "Направленное сглаживание краёв (убирает «лесенку» на наклонных линиях без размытия текстур). 0 — выкл. В запущенной игре меняется за секунду.",
+  "NPU Frame Generation": "Генератор кадров NPU",
+  "Off (1×)": "Выкл. (1×)",
+  "Auto": "Авто",
+  "Async frame generator (Off, Auto, 2×, 3×). Auto picks 2×/3× from real FPS and caps Gamescope to refresh/multiplier. Applies within a second.": "Асинхронный генератор кадров (Выкл., Авто, 2×, 3×). Авто выбирает 2×/3× по реальному FPS и ограничивает Gamescope под частоту экрана. Меняется за секунду.",
+  "Frame Generation engine": "Движок генератора кадров",
+  "Choose where optical flow runs: NPU (FlowNet v2 80×48 + occlusion mask, ~1 ms on NPU) or CPU (fast block-matching, 0 NPU load). Switches live in 1s.": "Где считать оптический поток: NPU (нейросеть FlowNet v2 80×48 + маска ореолов, ~1 мс) или процессор (быстро, 0 нагрузки NPU). Переключается за секунду.",
+  "NPU (FlowNet v2 · ~1 ms)": "NPU (FlowNet v2 · ~1 мс)",
+  "CPU (fast · 0 NPU load)": "Процессор (быстро · 0 нагрузки NPU)"
 }

@@ -70,6 +70,9 @@ import {
   setNpuSrModel,
   setNpuCapture,
   setNpuSharpness,
+  setNpuAa,
+  setNpuFg,
+  setNpuFgEngine,
   getNpuPackage,
   importNpuPackage,
   NpuPackage,
@@ -567,6 +570,21 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const r = await setNpuSharpness(v);
     if (r.status !== "success") toast(r.message || r.status);
   };
+  const changeNpuAa = async (v: number) => {
+    setNpu((cur) => cur ? { ...cur, aa: v } : cur);
+    const r = await setNpuAa(v);
+    if (r.status !== "success") toast(r.message || r.status);
+  };
+  const changeNpuFg = async (v: number) => {
+    setNpu((cur) => cur ? { ...cur, fg: v } : cur);
+    const r = await setNpuFg(v);
+    if (r.status !== "success") toast(r.message || r.status);
+  };
+  const changeNpuFgEngine = withSettingFocus(async (engine: string) => {
+    setNpu((cur) => cur ? { ...cur, fg_engine: engine } : cur);
+    const r = await setNpuFgEngine(engine);
+    if (r.status !== "success") toast(r.message || r.status);
+  });
   const changeNpuCapture = withSettingFocus(async (on: boolean) => {
     const r = await setNpuCapture(on);
     toast(r.message || r.status);
@@ -982,12 +1000,50 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                 </PanelSectionRow>
               )}
               {npu.available && npu.enabled && (
-                <PanelSectionRow>
-                  <SliderField label={t("NPU sharpness")} value={npu.sharpness ?? 0} min={0} max={1} step={0.1}
-                    showValue notchCount={11} notchTicksVisible={false}
-                    description={t("Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.")}
-                    onChange={(v: number) => void changeNpuSharpness(Math.round(v * 10) / 10)} />
-                </PanelSectionRow>
+                <>
+                  <PanelSectionRow>
+                    <SliderField label={t("NPU sharpness")} value={npu.sharpness ?? 0} min={0} max={1} step={0.1}
+                      showValue notchCount={11} notchTicksVisible={false}
+                      description={t("Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.")}
+                      onChange={(v: number) => void changeNpuSharpness(Math.round(v * 10) / 10)} />
+                  </PanelSectionRow>
+                  <PanelSectionRow>
+                    <SliderField label={t("NPU anti-aliasing")} value={npu.aa ?? 0.5} min={0} max={1} step={0.1}
+                      showValue notchCount={11} notchTicksVisible={false}
+                      description={t("Directional edge smoothing (removes stair-steps on diagonal edges without blurring textures). 0 = off. Applies within a second.")}
+                      onChange={(v: number) => void changeNpuAa(Math.round(v * 10) / 10)} />
+                  </PanelSectionRow>
+                  <PanelSectionRow>
+                    <SliderField label={t("NPU Frame Generation")}
+                      value={npu.fg === 0 ? 1 : npu.fg === 2 ? 2 : npu.fg === 3 ? 3 : 0}
+                      min={0} max={3} step={1}
+                      notchCount={4} notchLabels={[
+                        { notchIndex: 0, label: t("Off (1×)"), value: 0 },
+                        { notchIndex: 1, label: t("Auto"), value: 1 },
+                        { notchIndex: 2, label: "2×", value: 2 },
+                        { notchIndex: 3, label: "3×", value: 3 },
+                      ]}
+                      description={t("Async frame generator (Off, Auto, 2×, 3×). Auto picks 2×/3× from real FPS and caps Gamescope to refresh/multiplier. Applies within a second.")}
+                      onChange={(idx: number) => {
+                        const fgMap = [1, 0, 2, 3];
+                        void changeNpuFg(fgMap[Math.max(0, Math.min(3, Math.round(idx)))]);
+                      }} />
+                  </PanelSectionRow>
+                  {(npu.fg ?? 1) !== 1 && (
+                    <PanelSectionRow>
+                      <DropdownItem
+                        onMenuWillOpen={openMenuWithFocus}
+                        label={t("Frame Generation engine")}
+                        description={t("Choose where optical flow runs: NPU (FlowNet v2 80×48 + occlusion mask, ~1 ms on NPU) or CPU (fast block-matching, 0 NPU load). Switches live in 1s.")}
+                        selectedOption={npu.fg_engine ?? "npu"}
+                        rgOptions={[
+                          { data: "npu", label: t("NPU (FlowNet v2 · ~1 ms)") },
+                          { data: "cpu", label: t("CPU (fast · 0 NPU load)") },
+                        ]}
+                        onChange={(o: { data: string }) => void changeNpuFgEngine(String(o.data))} />
+                    </PanelSectionRow>
+                  )}
+                </>
               )}
               {npuLine && <PanelSectionRow><div style={small}>{npuLine}</div></PanelSectionRow>}
             </>
