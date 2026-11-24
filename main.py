@@ -101,11 +101,13 @@ class Plugin(GeneratorMixin, LsfgMixin, Fsr4Mixin, SignedOptiMixin, NpuSrMixin):
         except Exception as exc:
             decky.logger.error(f"[ANR] could not set up the bundled package: {exc}")
         self._update_task = asyncio.get_event_loop().create_task(self._update_loop())
+        self._bootstrap_task = asyncio.get_event_loop().create_task(self._npusr_auto_bootstrap())
 
     async def _unload(self):
-        task = getattr(self, "_update_task", None)
-        if task:
-            task.cancel()
+        for name in ("_update_task", "_bootstrap_task"):
+            task = getattr(self, name, None)
+            if task:
+                task.cancel()
         decky.logger.info("[ANR] plugin unloaded")
 
     # ── Migration from the old name (Decky ANR) ───────────────────────────────

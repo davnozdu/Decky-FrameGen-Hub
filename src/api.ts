@@ -83,7 +83,9 @@ export type NpuPackage = Result & { installed?: boolean; version?: string | null
   runtime_missing?: string[]; layer_registered?: boolean; layer_command?: string; npu_device?: boolean; service?: string; home?: string };
 export const getNpuPackage = callable<[], NpuPackage>("get_npu_package");
 export const importNpuPackage = callable<[archive: string], NpuPackage>("import_npu_package");
+export const installNpuFromGithub = callable<[], NpuPackage>("install_npu_from_github");
 export const importAllInOneBundle = callable<[archive: string], Result>("import_all_in_one_bundle");
+export const findLocalBundle = callable<[], Result & { path?: string | null; name?: string | null }>("find_local_bundle");
 export const getGameStatus = callable<[appid: string], GameStatus>("get_game_status");
 export const patchGame = callable<
   [appid: string, current_launch_options: string, target_dir: string],

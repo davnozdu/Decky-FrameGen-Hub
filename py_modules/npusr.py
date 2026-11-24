@@ -31,6 +31,7 @@ NPUSR_MANIFESTS = (
     Path("/usr/share/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
     Path("/etc/vulkan/implicit_layer.d/VkLayer_zz_npu_sr.json"),
 )
+NPUSR_RELEASES_API = "https://api.github.com/repos/davnozdu/npu-sr/releases?per_page=5"
 
 
 # Private NPU package (ZIP the user prepares; it is never downloaded): manifest.json + these files.
@@ -59,7 +60,8 @@ def read_npusr_package(path: Path) -> tuple[dict, dict[str, bytes]]:
             if not _NPUSR_MEMBER_RE.match(name) or name not in names:
                 raise ValueError(f"Bad or missing file in the NPU package: {name}")
             data = z.read(name)
-            if hashlib.sha256(data).hexdigest() != rec.get("sha256"):
+            expected = rec.get("sha256") if isinstance(rec, dict) else rec
+            if hashlib.sha256(data).hexdigest() != expected:
                 raise ValueError(f"Checksum mismatch in the NPU package: {name}")
             payload[name] = data
         extra = set(names) - set(files) - {"manifest.json"}
@@ -191,11 +193,17 @@ class NpuSrMixin:
         keys = ("in", "out", "frames", "npu_frames", "fallback_frames", "npu_ms", "connected")
         return {k: stats.get(k) for k in keys}
 
+    def _npusr_user_manifest(self) -> Path:
+        return self._home() / ".local" / "share" / "vulkan" / "implicit_layer.d" / "VkLayer_zz_npu_sr.json"
+
+    def _npusr_layer_registered(self) -> bool:
+        return self._npusr_user_manifest().is_file() or any(p.is_file() for p in NPUSR_MANIFESTS)
+
     def _npusr_status(self, appid: str) -> dict:
         missing = []
         if not (self._npusr_dir() / "libVkLayer_npu_sr.so").is_file():
             missing.append("Vulkan layer")
-        if not any(p.is_file() for p in NPUSR_MANIFESTS):
+        if not self._npusr_layer_registered():
             missing.append("layer manifest")
         if not self._npusr_unit_file().is_file():
             missing.append("NPU service")
@@ -269,7 +277,7 @@ class NpuSrMixin:
             pass
         installed = all((self._npusr_dir() / n).is_file() for n in ("libVkLayer_npu_sr.so", "npu-sr-service"))
         runtime_missing = [d for d in NPUSR_RUNTIME_DIRS if not (root / d).is_dir()]
-        layer_registered = any(p.is_file() for p in NPUSR_MANIFESTS)
+        layer_registered = self._npusr_layer_registered()
         npu_device = any(Path("/dev/accel").glob("accel*")) if Path("/dev/accel").is_dir() else False
         rc, out = self._npusr_systemctl("is-active", NPUSR_UNIT)
         return {
@@ -311,12 +319,17 @@ class NpuSrMixin:
                         old.unlink()
                     except OSError:
                         pass
+        # Register the implicit Vulkan layer in ~/.local/share/vulkan/implicit_layer.d (no sudo / Desktop Mode needed).
+        user_manifest = self._npusr_user_manifest()
+        user_manifest.parent.mkdir(parents=True, exist_ok=True)
+        user_manifest.write_bytes(payload["VkLayer_zz_npu_sr.json"])
         (dest / "package.json").write_text(json.dumps({"version": manifest.get("version"), "files": sorted(payload)},
                                                       indent=2), encoding="utf-8")
         unit = self._npusr_unit_file()
         unit.parent.mkdir(parents=True, exist_ok=True)
         unit.write_bytes(payload["npu-sr.service"])
         self._npusr_systemctl("daemon-reload")
+        self._npusr_systemctl("enable", "--now", NPUSR_UNIT)
         restarted = False
         models = self._npusr_models()
         current = self._npusr_model()
@@ -427,6 +440,86 @@ class NpuSrMixin:
         except Exception as exc:  # noqa: BLE001
             decky.logger.error(f"[Bundle] import: {exc}")
             return {"status": "error", "message": str(exc)}
+
+    def _find_local_bundle(self) -> Path | None:
+        candidates: list[Path] = []
+        for folder in (self._home() / "Downloads", self._home()):
+            if folder.is_dir():
+                candidates.extend(folder.glob("FrameGen-Hub-Full-Bundle-*.zip"))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return candidates[0]
+
+    async def find_local_bundle(self) -> dict:
+        try:
+            p = await asyncio.to_thread(self._find_local_bundle)
+            return {"status": "success", "path": str(p) if p else None, "name": p.name if p else None}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "path": None, "message": str(exc)}
+
+    def _npusr_install_from_github(self) -> dict:
+        raw = self._http_get(NPUSR_RELEASES_API, "application/vnd.github+json")
+        releases = json.loads(raw.decode("utf-8", "replace"))
+        if not isinstance(releases, list):
+            raise ValueError("Unexpected GitHub releases response.")
+        zip_url = sha_url = tag = None
+        for rel in releases:
+            if not isinstance(rel, dict) or rel.get("draft"):
+                continue
+            assets = rel.get("assets") or []
+            z_asset = next((a for a in assets if str(a.get("name", "")).startswith("npu-sr-package-") and str(a.get("name", "")).endswith(".zip")), None)
+            if z_asset:
+                zip_url = z_asset.get("browser_download_url")
+                s_asset = next((a for a in assets if str(a.get("name", "")).endswith(".sha256")), None)
+                sha_url = s_asset.get("browser_download_url") if s_asset else None
+                tag = rel.get("tag_name") or ""
+                break
+        if not zip_url:
+            raise ValueError("No npu-sr package asset found on GitHub.")
+        data = self._http_get(zip_url)
+        if sha_url:
+            expected = self._http_get(sha_url).decode("utf-8", "replace").split()[0].strip().lower()
+            actual = hashlib.sha256(data).hexdigest().lower()
+            if expected and actual != expected:
+                raise ValueError("Downloaded npu-sr package failed SHA-256 verification.")
+        with tempfile.TemporaryDirectory(prefix="npusr-dl-") as temp:
+            dst = Path(temp) / f"npu-sr-package-{tag or 'latest'}.zip"
+            dst.write_bytes(data)
+            return self._npusr_import_package(str(dst))
+
+    async def install_npu_from_github(self) -> dict:
+        try:
+            async with self._generator_lock():
+                return await asyncio.to_thread(self._npusr_install_from_github)
+        except Exception as exc:  # noqa: BLE001
+            decky.logger.error(f"[NPU-SR] GitHub install: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    async def _npusr_auto_bootstrap(self) -> None:
+        """Best-effort autonomous setup on plugin startup: offline local bundle first, then GitHub NPU-SR if NPU hardware is present."""
+        await asyncio.sleep(3)
+        try:
+            state = await asyncio.to_thread(self._npusr_package_state)
+            fsr4_ok = bool(await asyncio.to_thread(self._local_fsr4_source))
+            lsfg_ok = bool(await asyncio.to_thread(self._lsfg_library_path))
+            need_npu = bool(state.get("npu_device")) and (not state.get("installed") or not state.get("layer_registered"))
+            if not need_npu and fsr4_ok and lsfg_ok:
+                return
+            bundle = await asyncio.to_thread(self._find_local_bundle)
+            if bundle and (need_npu or not fsr4_ok or not lsfg_ok):
+                decky.logger.info(f"[Bootstrap] Found local bundle {bundle.name}; restoring missing components offline")
+                async with self._generator_lock():
+                    res = await asyncio.to_thread(self._import_all_in_one_bundle, str(bundle))
+                decky.logger.info(f"[Bootstrap] Local bundle result: {res.get('message')}")
+                return
+            if need_npu:
+                decky.logger.info("[Bootstrap] Ryzen AI NPU detected; downloading latest npu-sr package from GitHub")
+                async with self._generator_lock():
+                    res = await asyncio.to_thread(self._npusr_install_from_github)
+                decky.logger.info(f"[Bootstrap] GitHub NPU-SR result: {res.get('message')}")
+        except Exception as exc:  # noqa: BLE001
+            decky.logger.info(f"[Bootstrap] Skipped (offline or unavailable): {exc}")
 
     def _npusr_sharpness_file(self) -> Path:
         return self._home() / ".config" / "npu-sr" / "sharpness"

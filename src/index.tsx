@@ -75,7 +75,9 @@ import {
   setNpuFgEngine,
   getNpuPackage,
   importNpuPackage,
+  installNpuFromGithub,
   importAllInOneBundle,
+  findLocalBundle,
   NpuPackage,
   type NpuSrStatus,
 } from "./api";
@@ -1933,12 +1935,13 @@ function Fsr4Libraries({ onImported }: { onImported: () => void }) {
 
 function FullBundleSection({ onImported }: { onImported: () => void }) {
   const [busy, setBusy] = useState(false);
-  const importBundle = async () => {
-    let path: string;
-    try {
-      const file = await openFilePicker(FileSelectionType.FILE, "/home", true, true, undefined, ["zip"], false, false);
-      path = file.realpath || file.path;
-    } catch { return; }
+  const [found, setFound] = useState<{ path: string; name: string } | null>(null);
+  useEffect(() => {
+    void findLocalBundle().then((r) => {
+      if (r.status === "success" && r.path && r.name) setFound({ path: r.path, name: r.name });
+    }).catch(() => {});
+  }, []);
+  const runImport = async (path: string) => {
     setBusy(true);
     try {
       const r = await importAllInOneBundle(path);
@@ -1947,10 +1950,26 @@ function FullBundleSection({ onImported }: { onImported: () => void }) {
     } catch (e) { toast(errorText(e)); }
     finally { setBusy(false); }
   };
+  const pickBundle = async () => {
+    let path: string;
+    try {
+      const file = await openFilePicker(FileSelectionType.FILE, "/home", true, true, undefined, ["zip"], false, false);
+      path = file.realpath || file.path;
+    } catch { return; }
+    await runImport(path);
+  };
   return (
     <PanelSection title={t("All-in-one backup bundle")}>
+      {found && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={busy} onClick={() => void runImport(found.path)}
+            description={t("Found offline bundle in Downloads. Restores NPU-SR + models, FSR 4, and Lossless Scaling without internet.")}>
+            {busy ? t("Importing…") : t("Restore from {0}", found.name)}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
       <PanelSectionRow>
-        <ButtonItem layout="below" disabled={busy} onClick={() => void importBundle()}
+        <ButtonItem layout="below" disabled={busy} onClick={() => void pickBundle()}
           description={t("One-click restore after reinstalling: choose your personal bundle ZIP to install NPU-SR + models, FSR 4, and Lossless Scaling at once.")}>
           {busy ? t("Importing…") : t("Import full bundle (NPU + FSR 4 + Lossless)")}
         </ButtonItem>
@@ -1981,6 +2000,15 @@ function NpuPackageSection({ onImported }: { onImported: () => void }) {
     } catch (e) { toast(errorText(e)); }
     finally { setBusy(false); }
   };
+  const installGithub = async () => {
+    setBusy(true);
+    try {
+      const r = await installNpuFromGithub();
+      toast(r.message || r.status);
+      if (r.status === "success") { await load(); onImported(); }
+    } catch (e) { toast(errorText(e)); }
+    finally { setBusy(false); }
+  };
   const warn = { ...small, color: "#ffd866" };
   return (
     <PanelSection title={t("NPU upscaler (Ryzen AI)")}>
@@ -1998,6 +2026,12 @@ function NpuPackageSection({ onImported }: { onImported: () => void }) {
       {pkg?.installed && !pkg.layer_registered && (
         <PanelSectionRow><div style={warn}>{t("One-time step: in Desktop Mode open Konsole and run")}{" "}<code>{pkg.layer_command}</code></div></PanelSectionRow>
       )}
+      <PanelSectionRow>
+        <ButtonItem layout="below" disabled={busy} onClick={() => void installGithub()}
+          description={t("Downloads the latest npu-sr release (Vulkan layer, NPU service, models) from GitHub, verifies SHA-256, and registers the layer automatically without sudo.")}>
+          {busy ? t("Downloading…") : t("Download / update NPU-SR from GitHub")}
+        </ButtonItem>
+      </PanelSectionRow>
       <PanelSectionRow>
         <ButtonItem layout="below" disabled={busy} onClick={() => void importZip()}
           description={t("Private package you prepare yourself (npu-sr ZIP: Vulkan layer, NPU service, models). Checked by SHA-256; replaces the installed version, the selected model and game list are kept.")}>

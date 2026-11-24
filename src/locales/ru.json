@@ -577,6 +577,10 @@
   "NPU (FlowNet v2 · ~1 ms)": "NPU (FlowNet v2 · ~1 мс)",
   "CPU (fast · 0 NPU load)": "Процессор (быстро · 0 нагрузки NPU)",
   "All-in-one backup bundle": "Полный архив (всё в одном)",
+  "Found offline bundle in Downloads. Restores NPU-SR + models, FSR 4, and Lossless Scaling without internet.": "Найден оффлайн-архив в Загрузках. Восстанавливает NPU-SR с моделями, FSR 4 и Lossless Scaling без интернета.",
+  "Restore from {0}": "Восстановить из {0}",
   "One-click restore after reinstalling: choose your personal bundle ZIP to install NPU-SR + models, FSR 4, and Lossless Scaling at once.": "Восстановление в один клик после переустановки: выберите свой ZIP-архив, чтобы сразу накатить NPU-SR с моделями, FSR 4 и Lossless Scaling.",
-  "Import full bundle (NPU + FSR 4 + Lossless)": "Импорт полного архива (NPU + FSR 4 + Lossless)"
+  "Import full bundle (NPU + FSR 4 + Lossless)": "Импорт полного архива (NPU + FSR 4 + Lossless)",
+  "Downloads the latest npu-sr release (Vulkan layer, NPU service, models) from GitHub, verifies SHA-256, and registers the layer automatically without sudo.": "Скачивает свежий релиз npu-sr (слой Vulkan, сервис NPU, модели) с GitHub, проверяет SHA-256 и регистрирует слой сам без sudo.",
+  "Download / update NPU-SR from GitHub": "Скачать / обновить NPU-SR с GitHub"
 }
