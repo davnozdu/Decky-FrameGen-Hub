@@ -575,5 +575,8 @@
   "Frame Generation engine": "Движок генератора кадров",
   "Choose where optical flow runs: NPU (FlowNet v2 80×48 + occlusion mask, ~1 ms on NPU) or CPU (fast block-matching, 0 NPU load). Switches live in 1s.": "Где считать оптический поток: NPU (нейросеть FlowNet v2 80×48 + маска ореолов, ~1 мс) или процессор (быстро, 0 нагрузки NPU). Переключается за секунду.",
   "NPU (FlowNet v2 · ~1 ms)": "NPU (FlowNet v2 · ~1 мс)",
-  "CPU (fast · 0 NPU load)": "Процессор (быстро · 0 нагрузки NPU)"
+  "CPU (fast · 0 NPU load)": "Процессор (быстро · 0 нагрузки NPU)",
+  "All-in-one backup bundle": "Полный архив (всё в одном)",
+  "One-click restore after reinstalling: choose your personal bundle ZIP to install NPU-SR + models, FSR 4, and Lossless Scaling at once.": "Восстановление в один клик после переустановки: выберите свой ZIP-архив, чтобы сразу накатить NPU-SR с моделями, FSR 4 и Lossless Scaling.",
+  "Import full bundle (NPU + FSR 4 + Lossless)": "Импорт полного архива (NPU + FSR 4 + Lossless)"
 }

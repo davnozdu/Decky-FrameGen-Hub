@@ -75,6 +75,7 @@ import {
   setNpuFgEngine,
   getNpuPackage,
   importNpuPackage,
+  importAllInOneBundle,
   NpuPackage,
   type NpuSrStatus,
 } from "./api";
@@ -1930,6 +1931,34 @@ function Fsr4Libraries({ onImported }: { onImported: () => void }) {
   );
 }
 
+function FullBundleSection({ onImported }: { onImported: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const importBundle = async () => {
+    let path: string;
+    try {
+      const file = await openFilePicker(FileSelectionType.FILE, "/home", true, true, undefined, ["zip"], false, false);
+      path = file.realpath || file.path;
+    } catch { return; }
+    setBusy(true);
+    try {
+      const r = await importAllInOneBundle(path);
+      toast(r.message || r.status);
+      if (r.status === "success") onImported();
+    } catch (e) { toast(errorText(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <PanelSection title={t("All-in-one backup bundle")}>
+      <PanelSectionRow>
+        <ButtonItem layout="below" disabled={busy} onClick={() => void importBundle()}
+          description={t("One-click restore after reinstalling: choose your personal bundle ZIP to install NPU-SR + models, FSR 4, and Lossless Scaling at once.")}>
+          {busy ? t("Importing…") : t("Import full bundle (NPU + FSR 4 + Lossless)")}
+        </ButtonItem>
+      </PanelSectionRow>
+    </PanelSection>
+  );
+}
+
 function NpuPackageSection({ onImported }: { onImported: () => void }) {
   const [pkg, setPkg] = useState<NpuPackage | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2008,6 +2037,7 @@ function Content() {
       </PanelSection>
       {showTools && <>
         <PackageSection info={info} reload={reload} />
+        <FullBundleSection onImported={() => setFsrRevision((v) => v + 1)} />
         <Fsr4Libraries onImported={() => setFsrRevision((v) => v + 1)} />
         <NpuPackageSection onImported={() => setFsrRevision((v) => v + 1)} />
         <BenchmarkSection />

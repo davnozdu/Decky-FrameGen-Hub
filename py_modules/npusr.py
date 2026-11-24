@@ -302,17 +302,33 @@ class NpuSrMixin:
                 tmp.chmod(0o755 if name in NPUSR_EXECUTABLES else 0o644)
             for name in payload:  # atomic per file: a running game keeps its mapped library
                 os.replace(stage / name.replace("/", "__"), dest / name)
+        # Remove obsolete .onnx models that are no longer part of the imported package.
+        keep_models = {Path(name).name for name in payload if name.startswith("models/") and name.endswith(".onnx")}
+        if keep_models:
+            for old in (dest / "models").glob("*.onnx"):
+                if old.name not in keep_models:
+                    try:
+                        old.unlink()
+                    except OSError:
+                        pass
         (dest / "package.json").write_text(json.dumps({"version": manifest.get("version"), "files": sorted(payload)},
                                                       indent=2), encoding="utf-8")
         unit = self._npusr_unit_file()
         unit.parent.mkdir(parents=True, exist_ok=True)
         unit.write_bytes(payload["npu-sr.service"])
         self._npusr_systemctl("daemon-reload")
+        restarted = False
         models = self._npusr_models()
         current = self._npusr_model()
         if models and current not in {m["file"] for m in models}:
             self._npusr_set_model(models[0]["file"])  # default model = first in the catalog
-        elif self._npusr_systemctl("is-active", NPUSR_UNIT)[0] == 0:
+            restarted = True
+        models_x2 = self._npusr_models(x2=True)
+        current_x2 = self._npusr_model("NPU_SR_MODEL_X2")
+        if models_x2 and current_x2 not in {m["file"] for m in models_x2}:
+            self._npusr_set_model(models_x2[0]["file"])
+            restarted = True
+        if not restarted and self._npusr_systemctl("is-active", NPUSR_UNIT)[0] == 0:
             self._npusr_systemctl("restart", NPUSR_UNIT)
         state = self._npusr_package_state()
         msg = f"NPU package {manifest.get('version', '')} imported ({state['models']} models)."
@@ -336,6 +352,80 @@ class NpuSrMixin:
             return {"status": "error", "message": "Not a valid NPU package ZIP."}
         except Exception as exc:  # noqa: BLE001
             decky.logger.error(f"[NPU-SR] package import: {exc}")
+            return {"status": "error", "message": str(exc)}
+
+    def _import_all_in_one_bundle(self, archive: str) -> dict:
+        src = Path(archive).expanduser()
+        if not src.is_file():
+            raise ValueError(f"Archive not found: {src}")
+        done: list[str] = []
+        errors: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="fghub-bundle-") as temp:
+            stage = Path(temp)
+            with zipfile.ZipFile(src, "r") as z:
+                names = z.namelist()
+                meta = {}
+                if "bundle.json" in names:
+                    meta = json.loads(z.read("bundle.json").decode("utf-8"))
+                comps = meta.get("components", {}) if isinstance(meta, dict) else {}
+
+                def extract_member(member: str) -> Path:
+                    out = stage / Path(member).name
+                    out.write_bytes(z.read(member))
+                    return out
+
+                # 1. NPU-SR package
+                npu_entry = comps.get("npu_sr") or next(
+                    (n for n in names if n.lower().endswith(".zip") and "npu-sr" in Path(n).name.lower()), None
+                )
+                if npu_entry and npu_entry in names:
+                    try:
+                        r = self._npusr_import_package(str(extract_member(npu_entry)))
+                        done.append(f"NPU-SR ({r.get('models', '?')} models)")
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"NPU-SR: {exc}")
+
+                # 2. FSR 4 libraries ZIP
+                fsr4_entry = comps.get("fsr4") or next(
+                    (n for n in names if n.lower().endswith(".zip") and "fsr4" in Path(n).name.lower()), None
+                )
+                if fsr4_entry and fsr4_entry in names:
+                    try:
+                        r = self._import_fsr4_zip(str(extract_member(fsr4_entry)))
+                        r = self._apply_import_to_lite_games(r)
+                        ver = r.get("version") or "OK"
+                        done.append(f"FSR 4 ({ver})")
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"FSR 4: {exc}")
+
+                # 3. Lossless Scaling DLL
+                lsfg_entry = comps.get("lsfg") or next(
+                    (n for n in names if Path(n).name.lower() in ("lsfg-vk.dll", "lossless.dll")), None
+                )
+                if lsfg_entry and lsfg_entry in names:
+                    try:
+                        self._import_lsfg_library(str(extract_member(lsfg_entry)))
+                        done.append("Lossless Scaling")
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"Lossless: {exc}")
+
+        if not done and not errors:
+            return {"status": "error", "message": "Archive contains no NPU-SR, FSR 4, or Lossless Scaling packages."}
+        if not done:
+            return {"status": "error", "message": "; ".join(errors)}
+        msg = "Imported: " + ", ".join(done) + "."
+        if errors:
+            msg += " Warnings: " + "; ".join(errors)
+        return {"status": "success", "message": msg, "imported": done, "warnings": errors}
+
+    async def import_all_in_one_bundle(self, archive: str) -> dict:
+        try:
+            async with self._generator_lock():
+                return await asyncio.to_thread(self._import_all_in_one_bundle, str(archive))
+        except (zipfile.BadZipFile, json.JSONDecodeError):
+            return {"status": "error", "message": "Not a valid bundle ZIP."}
+        except Exception as exc:  # noqa: BLE001
+            decky.logger.error(f"[Bundle] import: {exc}")
             return {"status": "error", "message": str(exc)}
 
     def _npusr_sharpness_file(self) -> Path:
