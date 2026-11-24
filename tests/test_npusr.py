@@ -2,12 +2,14 @@
 import asyncio
 import json
 import os
+import socket
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import test_generators as fixtures
 import npusr
+from npusr_runtime import REQUIRED_FILES, install_runtime
 
 
 class NpuSr(unittest.TestCase):
@@ -24,9 +26,21 @@ class NpuSr(unittest.TestCase):
         os.environ.pop("XDG_CONFIG_HOME", None)
 
     def install(self):
-        (self.home / "AsusNPU/npu-sr").mkdir(parents=True)
-        (self.home / "AsusNPU/npu-sr/libVkLayer_npu_sr.so").write_bytes(b"ELF")
-        self.manifest.write_text("{}")
+        root = self.home / "AsusNPU"
+        dest = root / "npu-sr"
+        (dest / "models").mkdir(parents=True)
+        for path in npusr.NPUSR_PACKAGE_FILES:
+            (dest / path).touch()
+        (dest / "models" / "npu_flow_test.onnx").touch()  # package marker, ignored by selectable SR models
+        self.manifest.write_text(json.dumps({"layer": {"library_path": str(dest / "libVkLayer_npu_sr.so")}}))
+        for part, files in REQUIRED_FILES.items():
+            for name in files:
+                marker = root / part / name
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch()
+        patcher = patch.object(npusr, "_ryzen_npu_state", return_value="ready")
+        patcher.start()
+        self.addCleanup(patcher.stop)
         unit = self.home / ".config/systemd/user/npu-sr.service"
         unit.parent.mkdir(parents=True)
         unit.write_text("[Service]\n")
@@ -96,7 +110,7 @@ class NpuSr(unittest.TestCase):
     def test_models_catalog_and_switch(self):
         self.install()
         models = self.home / "AsusNPU/npu-sr/models"
-        models.mkdir()
+        models.mkdir(exist_ok=True)
         for name in ("a_u8.onnx", "b_u8.onnx", "junk_u8.onnx"):
             (models / name).write_bytes(b"onnx")
         (models / "archive").mkdir()
@@ -238,6 +252,74 @@ class NpuBlocksPatch(unittest.TestCase):
         r = self.p._patch("1", "", "")
         self.assertEqual(r["status"], "error")
         self.assertIn("NPU mode", r["message"])
+
+
+class NpuSetup(unittest.TestCase):
+    setUp = NpuPackage.setUp
+    make_zip = NpuPackage.make_zip
+    def test_setup_prepares_runtime_package_and_service_in_order(self):
+        sock = self.home / ".cache/npu-sr/npu-sr.sock"
+        sock.parent.mkdir(parents=True)
+        archive = self.make_zip()
+        calls = []
+        def prepare(root, progress):
+            self.assertEqual(root, self.home / "AsusNPU")
+            calls.append("runtime")
+        def download(*, start_service):
+            self.assertFalse(start_service)
+            calls.append("package")
+            return self.p._npusr_import_package(str(archive), start_service=False)
+        def start():
+            calls.append("service")
+            ready.bind(str(sock))
+        with socket.socket(socket.AF_UNIX) as ready, patch.object(npusr, "_ryzen_npu_state", return_value="ready"), \
+             patch.object(npusr, "install_runtime", side_effect=prepare), \
+             patch.object(self.p, "_npusr_install_from_github", side_effect=download), \
+             patch.object(self.p, "_npusr_start_service", side_effect=start):
+            asyncio.run(self.p._npusr_run_setup(False))
+        self.assertEqual(calls, ["runtime", "package", "service"])
+        self.assertEqual(self.p._npusr_setup_progress["stage"], "ready")
+        self.assertTrue(self.p._npusr_user_manifest().is_file())
+
+    def test_without_driver_setup_gives_help_without_downloading(self):
+        with patch.object(npusr, "_ryzen_npu_state", return_value="driver"), patch.object(npusr, "install_runtime") as install:
+            result = asyncio.run(self.p.install_npu_from_github())
+        self.assertEqual(result["status"], "error")
+        self.assertIn("sudo modprobe amdxdna", result["message"])
+        install.assert_not_called()
+
+    def test_startup_continues_online_if_offline_bundle_is_unreadable(self):
+        bundle = self.root / "offline.zip"
+        bundle.write_text("not a zip")
+        with patch.object(npusr, "_ryzen_npu_state", return_value="ready"), \
+             patch.object(npusr.asyncio, "sleep", new_callable=AsyncMock), \
+             patch.object(self.p, "_local_fsr4_source", return_value=None), \
+             patch.object(self.p, "_lsfg_dll", return_value=None), \
+             patch.object(self.p, "_find_local_bundle", return_value=bundle), \
+             patch.object(self.p, "_npusr_request_setup") as setup:
+            asyncio.run(self.p._npusr_auto_bootstrap())
+        setup.assert_called_once_with()
+
+    def test_existing_runtime_needs_no_download(self):
+        NpuSr.install(self)
+        with patch("npusr_runtime._download") as download:
+            install_runtime(self.home / "AsusNPU", lambda stage: None)
+        download.assert_not_called()
+
+    def test_service_permission_error_gives_command_for_konsole(self):
+        with patch.object(self.p, "_npusr_systemctl", return_value=(1, "Access denied")):
+            with self.assertRaisesRegex(RuntimeError, "systemctl --user daemon-reload in Konsole"):
+                self.p._npusr_start_service()
+
+    def test_rootless_layer_follows_system_layers_and_keeps_custom_path(self):
+        self.p._npusr_import_package(str(self.make_zip()), start_service=False)
+        ordered = self.p._npusr_ordered_layer_env()
+        self.assertLess(ordered.index("/usr/share/vulkan/implicit_layer.d"), ordered.index(str(self.p._npusr_user_manifest().parent)))
+        enabled = self.p._npusr_launch("FOO=bar %command% -dx12", True)
+        self.assertIn(ordered, enabled)
+        self.assertEqual(self.p._npusr_launch(enabled, False), "FOO=bar %command% -dx12")
+        custom = "VK_IMPLICIT_LAYER_PATH=/custom %command%"
+        self.assertNotIn(ordered, self.p._npusr_launch(custom, True))
 
 
 class NpuX2Models(unittest.TestCase):

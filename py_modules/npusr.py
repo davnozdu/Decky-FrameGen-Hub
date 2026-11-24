@@ -9,16 +9,21 @@ game files, so it combines with OptiScaler/FSR 4 (render below 720p, FSR to 720p
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import os
 import re
+import shlex
+import stat
 import subprocess
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
 import decky
+from npusr_runtime import download_percent, install_runtime, missing_components
 
 NPUSR_UNIT = "npu-sr.service"
 # RADV's RDR2 profile turns on the APU unified heap, which hides the CPU-cached memory types the layer needs for
@@ -34,14 +39,37 @@ NPUSR_MANIFESTS = (
 NPUSR_RELEASES_API = "https://api.github.com/repos/davnozdu/Decky-FrameGen-Hub/releases?per_page=5"
 
 
-# Private NPU package (ZIP the user prepares; it is never downloaded): manifest.json + these files.
+# NPU-SR application package: manifest.json + these files.
 NPUSR_PACKAGE_FILES = ("libVkLayer_npu_sr.so", "npu-sr-service", "run-service.sh", "runtime.sh", "npu-sr.service",
                        "VkLayer_zz_npu_sr.json", "install-layer.sh")
 NPUSR_EXECUTABLES = {"npu-sr-service", "run-service.sh", "runtime.sh", "install-layer.sh"}
 _NPUSR_MEMBER_RE = re.compile(r"^(?:models/)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 NPUSR_PACKAGE_MAX = 64 * 1024 * 1024
-# AMD Ryzen AI 1.9 runtime + XRT are not redistributable: the user installs them under ~/AsusNPU.
-NPUSR_RUNTIME_DIRS = ("runtime-1.9", "xrt-1.9", "sesr-env", "ubuntu-compat")
+
+
+def _ryzen_npu_state(pci: Path = Path("/sys/bus/pci/devices"), accel: Path = Path("/dev/accel")) -> str:
+    for device in pci.iterdir() if pci.is_dir() else ():
+        try:
+            # The published NPU-SR and FlowNet models target XDNA2.
+            if (device / "vendor").read_text().strip() != "0x1022" or (device / "device").read_text().strip() != "0x17f0":
+                continue
+            nodes = [accel / entry.name for entry in (device / "accel").glob("accel*")]
+            nodes = [node for node in nodes if node.is_char_device()]
+            if any(os.access(node, os.R_OK | os.W_OK) for node in nodes):
+                return "ready"
+            if nodes:
+                return "permission"
+            return "driver"
+        except OSError:
+            continue
+    return "unsupported"
+
+
+_NPU_SETUP_HELP = {
+    "permission": "The NPU exists, but your user cannot open it. Run ls -l /dev/accel/ in Konsole. If the device belongs to render, run sudo usermod -aG render \"$(id -un)\", then sign out and back in.",
+    "driver": "A Ryzen AI NPU was found on PCI, but SteamOS did not expose /dev/accel. Update SteamOS from Settings → System, reboot, and in Konsole run sudo modprobe amdxdna. If it still fails, check sudo journalctl -k -b --grep='amdxdna|amdnpu'.",
+    "unsupported": "No supported Ryzen AI XDNA2 NPU was detected. NPU-SR requires compatible hardware such as the ROG Xbox Ally X.",
+}
 
 
 def read_npusr_package(path: Path) -> tuple[dict, dict[str, bytes]]:
@@ -156,12 +184,31 @@ class NpuSrMixin:
         return models
 
     def _npusr_launch(self, current: str, enabled: bool) -> str:
+        ordered = self._npusr_ordered_layer_env()
         cur = _NPUSR_ENV_RE.sub("", (current or "").strip()).strip()
+        if cur.startswith(ordered + " "):
+            cur = cur[len(ordered):].strip()
         if enabled:
             # Leading env assignment: it then reaches the game through any wrapper before %command%
             # (e.g. `bash grip-deck-launch %command%`), instead of becoming the wrapper's argument.
-            cur = f"{NPUSR_LAUNCH_ENV} {cur}" if "%command%" in cur else f"{NPUSR_LAUNCH_ENV} %command% {cur}".strip()
+            prefix = NPUSR_LAUNCH_ENV
+            if (self._npusr_user_manifest().is_file() and not self._npusr_system_layer_for_install()
+                    and not re.search(r"(?<!\S)VK_IMPLICIT_LAYER_PATH=", cur)):
+                prefix += " " + ordered
+            cur = f"{prefix} {cur}" if "%command%" in cur else f"{prefix} %command% {cur}".strip()
         return "" if cur == "%command%" else cur
+
+    def _npusr_ordered_layer_env(self) -> str:
+        # A rootless manifest normally loads above Gamescope. Put system layers first so
+        # Gamescope sees the game's original swapchain, even inside Steam's runtime.
+        data_dirs = (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
+        config_dirs = (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":")
+        layer_dirs = ["/etc/vulkan/implicit_layer.d", "/run/host/usr/share/vulkan/implicit_layer.d",
+                      "/usr/share/vulkan/implicit_layer.d", "/usr/local/share/vulkan/implicit_layer.d"]
+        layer_dirs += [str(Path(directory) / "vulkan/implicit_layer.d") for directory in (*config_dirs, *data_dirs)
+                       if directory.startswith("/")]
+        layer_dirs += [str(self._home() / ".config/vulkan/implicit_layer.d"), str(self._npusr_user_manifest().parent)]
+        return "VK_IMPLICIT_LAYER_PATH=" + shlex.quote(":".join(dict.fromkeys(layer_dirs)))
 
     def _npusr_model(self, var: str = "NPU_SR_MODEL") -> str | None:
         conf = self._npusr_env_conf()
@@ -197,7 +244,13 @@ class NpuSrMixin:
         return self._home() / ".local" / "share" / "vulkan" / "implicit_layer.d" / "VkLayer_zz_npu_sr.json"
 
     def _npusr_layer_registered(self) -> bool:
-        return self._npusr_user_manifest().is_file() or any(p.is_file() for p in NPUSR_MANIFESTS)
+        if self._npusr_system_layer_for_install():
+            return True
+        try:
+            layer = json.loads(self._npusr_user_manifest().read_text())["layer"]
+            return layer["library_path"] == str(self._npusr_dir() / "libVkLayer_npu_sr.so")
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
 
     def _npusr_status(self, appid: str) -> dict:
         missing = []
@@ -207,10 +260,12 @@ class NpuSrMixin:
             missing.append("layer manifest")
         if not self._npusr_unit_file().is_file():
             missing.append("NPU service")
+        hardware = _ryzen_npu_state()
+        runtime_ok = not missing_components(self._home() / "AsusNPU")
         rc, out = self._npusr_systemctl("is-active", NPUSR_UNIT)
         return {
             "status": "success",
-            "available": not missing,
+            "available": not missing and hardware == "ready" and runtime_ok,
             "missing": missing,
             "enabled": str(appid) in self._npusr_apps(),
             "service": out.splitlines()[-1] if out else ("active" if rc == 0 else "unknown"),
@@ -275,26 +330,35 @@ class NpuSrMixin:
             info = json.loads((self._npusr_dir() / "package.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pass
-        installed = all((self._npusr_dir() / n).is_file() for n in ("libVkLayer_npu_sr.so", "npu-sr-service"))
-        runtime_missing = [d for d in NPUSR_RUNTIME_DIRS if not (root / d).is_dir()]
+        dest = self._npusr_dir()
+        try:
+            installed = all((dest / n).is_file() for n in NPUSR_PACKAGE_FILES) and any((dest / "models").glob("*.onnx"))
+        except PermissionError:
+            installed = False
+        runtime_missing = missing_components(root)
         layer_registered = self._npusr_layer_registered()
-        npu_device = any(Path("/dev/accel").glob("accel*")) if Path("/dev/accel").is_dir() else False
+        hardware = _ryzen_npu_state()
         rc, out = self._npusr_systemctl("is-active", NPUSR_UNIT)
+        setup = getattr(self, "_npusr_setup_progress", None)
+        if setup is not None:
+            setup = {**setup, "percent": download_percent(root, setup["stage"])}
         return {
             "status": "success",
             "installed": installed,
             "version": info.get("version") or ("local build" if installed else None),
-            "models": len(self._npusr_models()),
+            "models": len(self._npusr_models()) if installed else 0,
             "runtime_ok": not runtime_missing,
             "runtime_missing": [str(root / d) for d in runtime_missing],
             "layer_registered": layer_registered,
             "layer_command": f"sudo bash {self._npusr_dir() / 'install-layer.sh'}",
-            "npu_device": npu_device,
+            "npu_device": hardware == "ready",
+            "hardware_help": _NPU_SETUP_HELP.get(hardware),
+            "setup": setup,
             "service": out.splitlines()[-1] if out else ("active" if rc == 0 else "unknown"),
             "home": str(self._home()),
         }
 
-    def _npusr_import_package(self, archive: str) -> dict:
+    def _npusr_import_package(self, archive: str, *, start_service: bool = True) -> dict:
         manifest, payload = read_npusr_package(Path(archive).expanduser())
         dest = self._npusr_dir()
         (dest / "models").mkdir(parents=True, exist_ok=True)
@@ -310,45 +374,32 @@ class NpuSrMixin:
                 tmp.chmod(0o755 if name in NPUSR_EXECUTABLES else 0o644)
             for name in payload:  # atomic per file: a running game keeps its mapped library
                 os.replace(stage / name.replace("/", "__"), dest / name)
-        # Remove obsolete .onnx models that are no longer part of the imported package.
-        keep_models = {Path(name).name for name in payload if name.startswith("models/") and name.endswith(".onnx")}
-        if keep_models:
-            for old in (dest / "models").glob("*.onnx"):
-                if old.name not in keep_models:
-                    try:
-                        old.unlink()
-                    except OSError:
-                        pass
+        # Leave models that the user imported separately in place.
         # Register the implicit Vulkan layer in ~/.local/share/vulkan/implicit_layer.d (no sudo / Desktop Mode needed).
-        user_manifest = self._npusr_user_manifest()
-        user_manifest.parent.mkdir(parents=True, exist_ok=True)
-        user_manifest.write_bytes(payload["VkLayer_zz_npu_sr.json"])
+        self._npusr_register_layer()
         (dest / "package.json").write_text(json.dumps({"version": manifest.get("version"), "files": sorted(payload)},
                                                       indent=2), encoding="utf-8")
         unit = self._npusr_unit_file()
         unit.parent.mkdir(parents=True, exist_ok=True)
         unit.write_bytes(payload["npu-sr.service"])
         self._npusr_systemctl("daemon-reload")
-        self._npusr_systemctl("enable", "--now", NPUSR_UNIT)
-        restarted = False
         models = self._npusr_models()
         current = self._npusr_model()
         if models and current not in {m["file"] for m in models}:
-            self._npusr_set_model(models[0]["file"])  # default model = first in the catalog
-            restarted = True
+            self._npusr_set_model(models[0]["file"], restart=False)  # first item in the catalog is the default
         models_x2 = self._npusr_models(x2=True)
         current_x2 = self._npusr_model("NPU_SR_MODEL_X2")
         if models_x2 and current_x2 not in {m["file"] for m in models_x2}:
-            self._npusr_set_model(models_x2[0]["file"])
-            restarted = True
-        if not restarted and self._npusr_systemctl("is-active", NPUSR_UNIT)[0] == 0:
-            self._npusr_systemctl("restart", NPUSR_UNIT)
+            self._npusr_set_model(models_x2[0]["file"], restart=False)
         state = self._npusr_package_state()
+        if start_service and state["npu_device"] and state["runtime_ok"]:
+            self._npusr_start_service()
+            state = self._npusr_package_state()
         msg = f"NPU package {manifest.get('version', '')} imported ({state['models']} models)."
         if not state["layer_registered"]:
             msg += f" One-time step in Desktop Mode (Konsole): {state['layer_command']}"
         if not state["runtime_ok"]:
-            msg += " The Ryzen AI runtime is missing: see the NPU section."
+            msg += " Open the NPU section to finish setup."
         decky.logger.info(f"[NPU-SR] package {manifest.get('version')} imported")
         return {"status": "success", "message": msg, **{k: v for k, v in state.items() if k != "status"}}
 
@@ -360,14 +411,18 @@ class NpuSrMixin:
 
     async def import_npu_package(self, archive: str) -> dict:
         try:
-            return await asyncio.to_thread(self._npusr_import_package, str(archive))
+            async with self._generator_lock():
+                result = await asyncio.to_thread(self._npusr_import_package, str(archive))
+            if result["npu_device"] and not result["runtime_ok"]:
+                self._npusr_request_setup()
+            return result
         except (zipfile.BadZipFile, json.JSONDecodeError):
             return {"status": "error", "message": "Not a valid NPU package ZIP."}
         except Exception as exc:  # noqa: BLE001
             decky.logger.error(f"[NPU-SR] package import: {exc}")
             return {"status": "error", "message": str(exc)}
 
-    def _import_all_in_one_bundle(self, archive: str) -> dict:
+    def _import_all_in_one_bundle(self, archive: str, *, include_npu: bool = True, start_npu_service: bool = True) -> dict:
         src = Path(archive).expanduser()
         if not src.is_file():
             raise ValueError(f"Archive not found: {src}")
@@ -391,9 +446,9 @@ class NpuSrMixin:
                 npu_entry = comps.get("npu_sr") or next(
                     (n for n in names if n.lower().endswith(".zip") and "npu-sr" in Path(n).name.lower()), None
                 )
-                if npu_entry and npu_entry in names:
+                if include_npu and npu_entry and npu_entry in names:
                     try:
-                        r = self._npusr_import_package(str(extract_member(npu_entry)))
+                        r = self._npusr_import_package(str(extract_member(npu_entry)), start_service=start_npu_service)
                         done.append(f"NPU-SR ({r.get('models', '?')} models)")
                     except Exception as exc:  # noqa: BLE001
                         errors.append(f"NPU-SR: {exc}")
@@ -434,7 +489,11 @@ class NpuSrMixin:
     async def import_all_in_one_bundle(self, archive: str) -> dict:
         try:
             async with self._generator_lock():
-                return await asyncio.to_thread(self._import_all_in_one_bundle, str(archive))
+                result = await asyncio.to_thread(self._import_all_in_one_bundle, str(archive))
+            state = await asyncio.to_thread(self._npusr_package_state)
+            if result["status"] == "success" and state["installed"] and state["npu_device"] and not state["runtime_ok"]:
+                self._npusr_request_setup()
+            return result
         except (zipfile.BadZipFile, json.JSONDecodeError):
             return {"status": "error", "message": "Not a valid bundle ZIP."}
         except Exception as exc:  # noqa: BLE001
@@ -458,7 +517,7 @@ class NpuSrMixin:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "path": None, "message": str(exc)}
 
-    def _npusr_install_from_github(self) -> dict:
+    def _npusr_install_from_github(self, *, start_service: bool = True) -> dict:
         raw = self._http_get(NPUSR_RELEASES_API, "application/vnd.github+json")
         releases = json.loads(raw.decode("utf-8", "replace"))
         if not isinstance(releases, list):
@@ -475,49 +534,145 @@ class NpuSrMixin:
                 sha_url = s_asset.get("browser_download_url") if s_asset else None
                 tag = rel.get("tag_name") or ""
                 break
-        if not zip_url:
-            raise ValueError("No npu-sr package asset found on GitHub.")
+        if not zip_url or not sha_url:
+            raise ValueError("No NPU-SR package with a SHA-256 file found on GitHub.")
         data = self._http_get(zip_url)
-        if sha_url:
-            expected = self._http_get(sha_url).decode("utf-8", "replace").split()[0].strip().lower()
-            actual = hashlib.sha256(data).hexdigest().lower()
-            if expected and actual != expected:
-                raise ValueError("Downloaded npu-sr package failed SHA-256 verification.")
+        checksum = self._http_get(sha_url).decode("utf-8", "replace").split()
+        if not checksum or hashlib.sha256(data).hexdigest() != checksum[0].lower():
+            raise ValueError("Downloaded npu-sr package failed SHA-256 verification.")
         with tempfile.TemporaryDirectory(prefix="npusr-dl-") as temp:
             dst = Path(temp) / f"npu-sr-package-{tag or 'latest'}.zip"
             dst.write_bytes(data)
-            return self._npusr_import_package(str(dst))
+            return self._npusr_import_package(str(dst), start_service=start_service)
 
     async def install_npu_from_github(self) -> dict:
+        return self._npusr_request_setup(update_package=True)
+
+    def _npusr_system_layer_for_install(self) -> bool:
+        expected = str(self._npusr_dir() / "libVkLayer_npu_sr.so")
+        for path in NPUSR_MANIFESTS:
+            try:
+                if json.loads(path.read_text())["layer"]["library_path"] == expected:
+                    return True
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        return False
+
+    def _npusr_register_layer(self) -> None:
+        if self._npusr_system_layer_for_install():
+            return
+        dest = self._npusr_dir()
+        layer = json.loads((dest / "VkLayer_zz_npu_sr.json").read_text())
+        layer["layer"]["library_path"] = str(dest / "libVkLayer_npu_sr.so")
+        user_manifest = self._npusr_user_manifest()
+        user_manifest.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=user_manifest.parent, delete=False) as out:
+            temporary = Path(out.name)
+            try:
+                out.write(json.dumps(layer, indent=2) + "\n")
+                out.close()
+                temporary.replace(user_manifest)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    def _npusr_start_service(self) -> None:
+        for args in (("daemon-reload",), ("enable", NPUSR_UNIT), ("restart", NPUSR_UNIT)):
+            rc, out = self._npusr_systemctl(*args)
+            if rc:
+                command = shlex.join(("systemctl", "--user", *args))
+                raise RuntimeError(f"Could not start NPU-SR automatically. Run {command} in Konsole as your Steam user. {out}")
+
+    def _npusr_report_setup(self, stage: str, message: str | None = None) -> None:
+        self._npusr_setup_progress = {"stage": stage, "message": message}
+
+    def _npusr_setup(self, update_package: bool) -> None:
+        hardware = _ryzen_npu_state()
+        if hardware != "ready":
+            raise RuntimeError(_NPU_SETUP_HELP[hardware])
+        root = self._home() / "AsusNPU"
+        root.mkdir(parents=True, exist_ok=True)
+        with (root / ".npusr-setup.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("Another NPU setup is running. Wait for it to finish, then retry.") from exc
+            install_runtime(root, self._npusr_report_setup)
+            state = self._npusr_package_state()
+            if update_package or not state["installed"]:
+                self._npusr_report_setup("package")
+                self._npusr_install_from_github(start_service=False)
+            elif not state["layer_registered"]:
+                self._npusr_register_layer()
+            unit = self._npusr_unit_file()
+            if not unit.is_file():
+                unit.parent.mkdir(parents=True, exist_ok=True)
+                unit.write_bytes((self._npusr_dir() / NPUSR_UNIT).read_bytes())
+            self._npusr_report_setup("service")
+            socket = self._home() / ".cache" / "npu-sr" / "npu-sr.sock"
+            socket.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            try:
+                previous = socket.stat()
+            except FileNotFoundError:
+                previous = None
+            self._npusr_start_service()
+            # On first run the service compiles all configured models on the device.
+            for _ in range(360):
+                try:
+                    current = socket.stat()
+                except FileNotFoundError:
+                    current = None
+                if (current and stat.S_ISSOCK(current.st_mode)
+                        and (not previous or (current.st_ino, current.st_mtime_ns) != (previous.st_ino, previous.st_mtime_ns))
+                        and self._npusr_systemctl("is-active", NPUSR_UNIT)[0] == 0):
+                    return
+                time.sleep(0.5)
+            raise RuntimeError("NPU-SR did not open its socket. In Konsole run journalctl --user -u npu-sr.service -n 50 --no-pager.")
+
+    async def _npusr_run_setup(self, update_package: bool) -> None:
         try:
             async with self._generator_lock():
-                return await asyncio.to_thread(self._npusr_install_from_github)
+                await asyncio.to_thread(self._npusr_setup, update_package)
+            self._npusr_report_setup("ready")
+        except PermissionError as exc:
+            path = exc.filename or str(self._home() / "AsusNPU")
+            self._npusr_report_setup("error", f"Permission denied at {path}. In Konsole run ls -ld {shlex.quote(path)} "
+                                     "to check its owner. If a file or directory in your home is root-owned, "
+                                     f"run sudo chown \"$(id -un):$(id -gn)\" {shlex.quote(path)} on that path, then retry.")
         except Exception as exc:  # noqa: BLE001
-            decky.logger.error(f"[NPU-SR] GitHub install: {exc}")
-            return {"status": "error", "message": str(exc)}
+            decky.logger.error(f"[NPU-SR] setup: {exc}")
+            self._npusr_report_setup("error", str(exc))
+
+    def _npusr_request_setup(self, *, update_package: bool = False) -> dict:
+        hardware = _ryzen_npu_state()
+        if hardware != "ready":
+            return {"status": "error", "message": _NPU_SETUP_HELP[hardware]}
+        task = getattr(self, "_npusr_setup_task", None)
+        if task is None or task.done():
+            self._npusr_report_setup("checking")
+            self._npusr_setup_task = asyncio.create_task(self._npusr_run_setup(update_package))
+        return {"status": "success"}
 
     async def _npusr_auto_bootstrap(self) -> None:
-        """Best-effort autonomous setup on plugin startup: offline local bundle first, then GitHub NPU-SR if NPU hardware is present."""
+        """Restore local libraries and complete missing NPU setup on supported hardware."""
         await asyncio.sleep(3)
         try:
             state = await asyncio.to_thread(self._npusr_package_state)
             fsr4_ok = bool(await asyncio.to_thread(self._local_fsr4_source))
-            lsfg_ok = bool(await asyncio.to_thread(self._lsfg_library_path))
-            need_npu = bool(state.get("npu_device")) and (not state.get("installed") or not state.get("layer_registered"))
-            if not need_npu and fsr4_ok and lsfg_ok:
-                return
-            bundle = await asyncio.to_thread(self._find_local_bundle)
-            if bundle and (need_npu or not fsr4_ok or not lsfg_ok):
+            lsfg_ok = bool(await asyncio.to_thread(self._lsfg_dll))
+            need_package = state["npu_device"] and not state["installed"]
+            bundle = await asyncio.to_thread(self._find_local_bundle) if need_package or not fsr4_ok or not lsfg_ok else None
+            if bundle:
                 decky.logger.info(f"[Bootstrap] Found local bundle {bundle.name}; restoring missing components offline")
-                async with self._generator_lock():
-                    res = await asyncio.to_thread(self._import_all_in_one_bundle, str(bundle))
-                decky.logger.info(f"[Bootstrap] Local bundle result: {res.get('message')}")
-                return
-            if need_npu:
-                decky.logger.info("[Bootstrap] Ryzen AI NPU detected; downloading latest npu-sr package from GitHub")
-                async with self._generator_lock():
-                    res = await asyncio.to_thread(self._npusr_install_from_github)
-                decky.logger.info(f"[Bootstrap] GitHub NPU-SR result: {res.get('message')}")
+                try:
+                    async with self._generator_lock():
+                        res = await asyncio.to_thread(self._import_all_in_one_bundle, str(bundle),
+                                                      include_npu=need_package, start_npu_service=False)
+                    decky.logger.info(f"[Bootstrap] Local bundle result: {res.get('message')}")
+                except (OSError, ValueError, zipfile.BadZipFile) as exc:
+                    decky.logger.info(f"[Bootstrap] Could not read local bundle: {exc}")
+            if state["npu_device"] and (need_package or not state["layer_registered"] or not state["runtime_ok"]
+                                        or not self._npusr_unit_file().is_file() or state["service"] != "active"):
+                self._npusr_request_setup()
         except Exception as exc:  # noqa: BLE001
             decky.logger.info(f"[Bootstrap] Skipped (offline or unavailable): {exc}")
 
@@ -626,6 +781,14 @@ class NpuSrMixin:
             return {"status": "error", "message": str(exc)}
 
     async def set_npu_sr(self, appid: str, enabled: bool, current: str = "") -> dict:
+        if enabled:
+            package = await asyncio.to_thread(self._npusr_package_state)
+            if not package["npu_device"]:
+                return {"status": "error", "message": package["hardware_help"]}
+            if (not package["installed"] or not package["runtime_ok"] or not package["layer_registered"]
+                    or not self._npusr_unit_file().is_file()):
+                self._npusr_request_setup()
+                return {"status": "error", "message": "NPU setup is running. Check Tools → Libraries and updates, then enable it again."}
         result = await asyncio.to_thread(self._npusr_set, str(appid), bool(enabled))
         if result.get("status") == "success":
             result["launch_options"] = self._npusr_launch(current, bool(enabled))
@@ -634,7 +797,7 @@ class NpuSrMixin:
     async def set_npu_sr_model(self, model: str) -> dict:
         return await asyncio.to_thread(self._npusr_set_model, str(model))
 
-    def _npusr_set_model(self, model: str) -> dict:
+    def _npusr_set_model(self, model: str, *, restart: bool = True) -> dict:
         x2 = self._npusr_is_x2(model)
         if model not in {m["file"] for m in self._npusr_models(x2=x2)}:
             return {"status": "error", "message": "Unknown NPU model."}
@@ -654,8 +817,7 @@ class NpuSrMixin:
         except OSError as exc:
             return {"status": "error", "message": f"Could not save the NPU model: {exc}"}
         self._npusr_systemctl("set-environment", f"{var}={path}")
-        rc, _ = self._npusr_systemctl("is-active", NPUSR_UNIT)
-        if rc == 0:
+        if restart and self._npusr_systemctl("is-active", NPUSR_UNIT)[0] == 0:
             rc, out = self._npusr_systemctl("restart", NPUSR_UNIT)
             if rc != 0:
                 decky.logger.error(f"[NPU-SR] restart for model {model}: {out}")

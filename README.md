@@ -6,6 +6,12 @@
 
 **Инструкция на русском: [README.ru.md](README.ru.md).**
 
+## NPU-SR on a clean device
+
+After installing Decky FrameGen Hub, setup starts automatically on a supported Ryzen AI device with an accessible NPU. It downloads the missing Ryzen AI 1.9 and XRT files directly from AMD, prepares Python and compatibility libraries, installs the NPU-SR package, and starts the user service. A clean installation downloads about 2.5 GB into your home directory. The plugin shows progress and lets you retry under **Tools → Libraries and updates → Install / update NPU-SR**.
+
+If SteamOS has not exposed the NPU at `/dev/accel`, the same panel shows the driver or permission checks to run in Konsole. A system update and reboot may be required. You can also place official archives in `~/Downloads` if an automatic download fails. The installer verifies their checksums before using them. [AMD Ryzen AI Software for Linux](https://ryzenai.docs.amd.com/en/main/linux.html)
+
 ## What's new in `v0.2.9-nsl.17` and `npu-sr v2026.11.24.1`
 
 - Fixed Vulkan resource and file descriptor leaks on NPU setup and connection errors.
@@ -23,7 +29,7 @@
 - **Autonomous Setup & Offline Restore (No Desktop Mode / No `sudo`)**:
   - Registers `VkLayer_zz_npu_sr.json` automatically in `~/.local/share/vulkan/implicit_layer.d/` and enables `npu-sr.service` via `systemctl --user`.
   - **Offline-first bootstrap**: drop your personal `FrameGen-Hub-Full-Bundle-*.zip` into `~/Downloads/` and the plugin restores NPU-SR + models, FSR 4, and Lossless Scaling automatically (or in 1 click under *Libraries and updates*).
-  - **Online fallback**: on Ryzen AI devices (`/dev/accel`), automatically downloads `npu-sr-package-*.zip` from this repository's Releases with SHA-256 verification and cleans up obsolete `.onnx` models.
+  - **Online fallback**: on Ryzen AI devices (`/dev/accel`), automatically downloads `npu-sr-package-*.zip` from this repository's Releases with SHA-256 verification. Models that you imported separately stay in place.
 
 | Generator | Pick it for | Forza Horizon 6, ROG Xbox Ally X, 2X |
 |---|---|---|

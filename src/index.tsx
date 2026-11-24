@@ -1981,10 +1981,21 @@ function FullBundleSection({ onImported }: { onImported: () => void }) {
 function NpuPackageSection({ onImported }: { onImported: () => void }) {
   const [pkg, setPkg] = useState<NpuPackage | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => {
-    try { setPkg(await getNpuPackage()); } catch (e) { toast(errorText(e)); }
+  const setupStage = pkg?.setup?.stage;
+  const runningSetup = Boolean(setupStage && !["ready", "error"].includes(setupStage));
+  const load = useCallback(async (showError = true) => {
+    try { setPkg(await getNpuPackage()); } catch (e) { if (showError) toast(errorText(e)); }
   }, []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(false), 2000);
+    return () => clearInterval(timer);
+  }, [load]);
+  const previousStage = useRef<string>();
+  useEffect(() => {
+    if (setupStage === "ready" && previousStage.current !== "ready") onImported();
+    previousStage.current = setupStage;
+  }, [setupStage, onImported]);
   const importZip = async () => {
     let path: string;
     try {
@@ -2004,12 +2015,22 @@ function NpuPackageSection({ onImported }: { onImported: () => void }) {
     setBusy(true);
     try {
       const r = await installNpuFromGithub();
-      toast(r.message || r.status);
-      if (r.status === "success") { await load(); onImported(); }
+      if (r.message) toast(r.message);
+      await load();
     } catch (e) { toast(errorText(e)); }
     finally { setBusy(false); }
   };
   const warn = { ...small, color: "#ffd866" };
+  const setupText: Record<string, string> = {
+    checking: t("Checking NPU setup…"),
+    ryzen: t("Downloading and unpacking AMD Ryzen AI 1.9…"),
+    xrt: t("Downloading and unpacking AMD XRT…"),
+    python: t("Preparing the Python environment…"),
+    compat: t("Installing local compatibility libraries…"),
+    package: t("Installing the NPU-SR layer and models…"),
+    service: t("Starting the NPU service…"),
+    ready: t("NPU setup is complete."),
+  };
   return (
     <PanelSection title={t("NPU upscaler (Ryzen AI)")}>
       <PanelSectionRow>
@@ -2017,23 +2038,26 @@ function NpuPackageSection({ onImported }: { onImported: () => void }) {
           {pkg === null ? "…" : pkg.installed ? t("{0} · {1} models", pkg.version ?? "?", pkg.models ?? 0) : t("not installed")}
         </Field>
       </PanelSectionRow>
-      {pkg && !pkg.npu_device && (
-        <PanelSectionRow><div style={warn}>{t("No Ryzen AI NPU found (/dev/accel). NPU upscaling needs a Ryzen AI APU and the amdxdna kernel driver.")}</div></PanelSectionRow>
+      {pkg?.hardware_help && (
+        <PanelSectionRow><div style={warn}>{translateMessage(pkg.hardware_help)}</div></PanelSectionRow>
       )}
-      {pkg && !pkg.runtime_ok && (
-        <PanelSectionRow><div style={warn}>{t("AMD Ryzen AI 1.9 runtime is missing (not redistributable). Install it to: {0}.", (pkg.runtime_missing ?? []).join(", "))}</div></PanelSectionRow>
+      {setupStage && (setupText[setupStage] || pkg?.setup?.message) && (
+        <PanelSectionRow><div style={setupStage === "error" ? warn : small}>
+          {pkg?.setup?.message ? translateMessage(pkg.setup.message) : setupText[setupStage]}
+          {pkg?.setup?.percent == null ? null : ` ${pkg.setup.percent}%`}
+        </div></PanelSectionRow>
       )}
       {pkg?.installed && !pkg.layer_registered && (
         <PanelSectionRow><div style={warn}>{t("One-time step: in Desktop Mode open Konsole and run")}{" "}<code>{pkg.layer_command}</code></div></PanelSectionRow>
       )}
       <PanelSectionRow>
-        <ButtonItem layout="below" disabled={busy} onClick={() => void installGithub()}
-          description={t("Downloads the latest npu-sr release (Vulkan layer, NPU service, models) from GitHub, verifies SHA-256, and registers the layer automatically without sudo.")}>
-          {busy ? t("Downloading…") : t("Download / update NPU-SR from GitHub")}
+        <ButtonItem layout="below" disabled={busy || runningSetup || !pkg?.npu_device} onClick={() => void installGithub()}
+          description={t("Downloads the NPU-SR package and missing AMD libraries, checks the downloads, and starts the service. A clean setup downloads about 2.5 GB.")}>
+          {t("Install / update NPU-SR")}
         </ButtonItem>
       </PanelSectionRow>
       <PanelSectionRow>
-        <ButtonItem layout="below" disabled={busy} onClick={() => void importZip()}
+        <ButtonItem layout="below" disabled={busy || runningSetup} onClick={() => void importZip()}
           description={t("Private package you prepare yourself (npu-sr ZIP: Vulkan layer, NPU service, models). Checked by SHA-256; replaces the installed version, the selected model and game list are kept.")}>
           {busy ? t("Importing…") : t("Import NPU package (ZIP)")}
         </ButtonItem>
