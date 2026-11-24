@@ -6,6 +6,11 @@
 
 **Инструкция на русском: [README.ru.md](README.ru.md).**
 
+## What's new in `v0.2.9-nsl.17` and `npu-sr v2026.11.24.1`
+
+- Fixed Vulkan resource and file descriptor leaks on NPU setup and connection errors.
+- Fixed swapchain recovery, bilinear fallback when the NPU is unavailable, and FPS limit restoration on service shutdown.
+
 ## What's new in `v0.2.9-nsl.16` + `npu-sr v2026.11.24`
 
 - **Ryzen AI NPU Upscaler + Async Frame Generation (Z2 Extreme / Strix Point `AIE2P`)**:
