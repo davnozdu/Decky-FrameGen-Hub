@@ -741,12 +741,44 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     return parts.filter(Boolean).join(" ");
   };
 
+  // One-click FSR 4.1.2 Lite setup (optionally combined with NPU-SR + NPU FrameGen on top):
+  // patches OptiScaler if needed, turns OptiScaler FG off, switches core to 0.10 Nightly, activates FSR 4 Lite,
+  // and enables/disables the NPU layer cleanly without forcing the user through 3 hidden menus.
+  const enableFsr4Lite = async (withNpu: boolean): Promise<string> => {
+    const parts: string[] = [];
+    if (!patched) {
+      const current = await getLaunchOptions(Number(appid));
+      const r = await patchGame(appid, current, dirChoice === AUTO_DIR ? "" : dirChoice);
+      if (r.status !== "success") throw new Error(r.message || t("Patch failed."));
+      if (r.launch_options !== undefined && r.launch_options !== current) setLaunchOptions(Number(appid), r.launch_options);
+    }
+    const g = await setGeneratorMode(appid, "off", 2, 1.0, false);
+    if (g.status !== "success") throw new Error(g.message || t("Failed."));
+    await syncLaunchMode(appid);
+    const curAfterGen = await getLaunchOptions(Number(appid));
+    const c = await setOptiscalerCore(appid, "nightly", curAfterGen);
+    if (c.status !== "success") throw new Error(c.message || t("Failed."));
+    if (c.launch_options !== undefined && c.launch_options !== curAfterGen) setLaunchOptions(Number(appid), c.launch_options);
+    const u = await setUpscaler(appid, "fsr4lite", false);
+    if (u.status !== "success") throw new Error(u.message || t("Failed."));
+    await syncLaunchMode(appid);
+    parts.push(u.message || t("FSR 4 Lite enabled."));
+    const curAfterUp = await getLaunchOptions(Number(appid));
+    const n = await setNpuSr(appid, withNpu, curAfterUp);
+    if (n.status !== "success") throw new Error(n.message || t("Failed."));
+    if (n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
+    if (withNpu) parts.push(t("NPU layer enabled on top (900p / 720p → 1080p + NPU FG)."));
+    return parts.filter(Boolean).join(" ");
+  };
+
   // Unpatched game: one Upscaler list and one Frame generator list; OptiScaler is installed only when a choice needs it.
   const changeCleanChoice = withSettingFocus(async (kind: "upscaler" | "generator", choice: string) => {
     if (busy !== null) return;
     setBusy("patch");
     try {
       if (kind === "upscaler" && choice === "npu") toast(await enableNpuClean());
+      else if (kind === "upscaler" && choice === "fsr4lite_npu") toast(await enableFsr4Lite(true));
+      else if (kind === "upscaler" && choice === "fsr4lite") toast(await enableFsr4Lite(false));
       else if (kind === "upscaler" && choice === "off") {
         if (npu?.enabled) {
           const current = await getLaunchOptions(Number(appid));
@@ -776,6 +808,15 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     if (choice === "npu") {
       setBusy("unpatch");
       try { toast(await enableNpuClean()); } catch (e) { toast(errorText(e)); }
+      finally { setBusy(null); }
+      await loadStatus(appid, true);
+      await loadGames();
+      await loadNpu(appid);
+      return;
+    }
+    if (choice === "fsr4lite_npu" || choice === "fsr4lite") {
+      setBusy("patch");
+      try { toast(await enableFsr4Lite(choice === "fsr4lite_npu")); } catch (e) { toast(errorText(e)); }
       finally { setBusy(null); }
       await loadStatus(appid, true);
       await loadGames();
@@ -1046,8 +1087,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   rgOptions={[
                     { data: "off", label: t("Off (game's own)") },
                     ...(npu.available ? [{ data: "npu", label: t("NPU (900p / 720p / 576p → 1080p)") }] : []),
-                    { data: "fsr4", label: t("FSR 4 · installs OptiScaler") },
+                    ...(npu.available ? [{ data: "fsr4lite_npu", label: t("FSR 4 Lite + NPU (1-click tandem)") }] : []),
                     { data: "fsr4lite", label: t("FSR 4 Lite · installs OptiScaler") },
+                    { data: "fsr4", label: t("FSR 4 · installs OptiScaler") },
                   ]}
                   onChange={(o: { data: string }) => void changeCleanChoice("upscaler", String(o.data))} />
               </PanelSectionRow>
@@ -1263,7 +1305,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                           : t("OptiScaler's upscaler. The game's DLSS option drives it.")
                       }
                       selectedOption={npu?.enabled
-                        ? (!upscaler.choice || upscaler.choice === "off" ? "npu" : upscaler.choice)
+                        ? (upscaler.choice === "fsr4lite" ? "fsr4lite_npu" : (!upscaler.choice || upscaler.choice === "off" ? "npu" : upscaler.choice))
                         : (upscaler.choice || "package")}
                       rgOptions={(() => {
                         const list = upscaler.options.map((o) => ({
@@ -1275,7 +1317,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                             : o.label,
                         }));
                         if (!npu?.available) return list;
-                        return [{ data: "npu", label: t("NPU (900p / 720p / 576p → 1080p)") }, ...list];
+                        return [
+                          { data: "npu", label: t("NPU (900p / 720p / 576p → 1080p)") },
+                          { data: "fsr4lite_npu", label: t("FSR 4 Lite + NPU (1-click tandem)") },
+                          ...list,
+                        ];
                       })()}
                       onChange={(o) => void changeUpscalerChoice(String(o.data), Boolean(upscaler.watermark))}
                     />
