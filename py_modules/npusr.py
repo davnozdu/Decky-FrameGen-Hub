@@ -155,6 +155,22 @@ class NpuSrMixin:
         models.sort(key=lambda m: (m["order"], m["label"]))
         return models
 
+    def _npusr_models_900p(self) -> list[dict]:
+        folder = self._npusr_dir() / "models"
+        try:
+            catalog = json.loads((folder / "catalog.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            catalog = {}
+        models = []
+        for path in sorted(folder.glob("*.onnx")):
+            if "180x320x25" not in path.name:
+                continue
+            info = catalog.get(path.name, {}) if isinstance(catalog, dict) else {}
+            models.append({"file": path.name, "label": info.get("label") or path.stem, "note": info.get("note", ""),
+                           "order": info.get("order", 100)})
+        models.sort(key=lambda m: (m["order"], m["label"]))
+        return models
+
     def _npusr_launch(self, current: str, enabled: bool) -> str:
         cur = _NPUSR_ENV_RE.sub("", (current or "").strip()).strip()
         if enabled:
@@ -209,6 +225,7 @@ class NpuSrMixin:
         if not self._npusr_unit_file().is_file():
             missing.append("NPU service")
         rc, out = self._npusr_systemctl("is-active", NPUSR_UNIT)
+        m900 = self._npusr_models_900p()
         return {
             "status": "success",
             "available": not missing,
@@ -217,6 +234,8 @@ class NpuSrMixin:
             "service": out.splitlines()[-1] if out else ("active" if rc == 0 else "unknown"),
             "model": self._npusr_model(),
             "models": self._npusr_models(),
+            "model_900p": self._npusr_model("NPU_SR_MODEL_900P") or (m900[0]["file"] if m900 else None),
+            "models_900p": m900,
             "model_x2": self._npusr_model("NPU_SR_MODEL_X2"),
             "sharpness": self._npusr_sharpness(),
             "aa": self._npusr_aa(),
@@ -636,10 +655,12 @@ class NpuSrMixin:
         return await asyncio.to_thread(self._npusr_set_model, str(model))
 
     def _npusr_set_model(self, model: str) -> dict:
-        x2 = self._npusr_is_x2(model)
-        if model not in {m["file"] for m in self._npusr_models(x2=x2)}:
+        is_900p = "180x320x25" in model
+        x2 = (not is_900p) and self._npusr_is_x2(model)
+        pool = self._npusr_models_900p() if is_900p else self._npusr_models(x2=x2)
+        if model not in {m["file"] for m in pool}:
             return {"status": "error", "message": "Unknown NPU model."}
-        var = "NPU_SR_MODEL_X2" if x2 else "NPU_SR_MODEL"
+        var = "NPU_SR_MODEL_900P" if is_900p else ("NPU_SR_MODEL_X2" if x2 else "NPU_SR_MODEL")
         path = self._npusr_dir() / "models" / model
         conf = self._npusr_env_conf()
         try:

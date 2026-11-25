@@ -1111,6 +1111,17 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   </PanelSectionRow>
                 </>
               )}
+              {npu.available && npu.enabled && (npu.models_900p?.length ?? 0) > 0 && (
+                <PanelSectionRow>
+                  <DropdownItem
+                    onMenuWillOpen={openMenuWithFocus}
+                    label={t("NPU model for 1600×900 (×1.2)")}
+                    description={t("Used automatically when the game runs at 1600×900: near-native 1080p clarity in ~3.5 ms on the NPU.")}
+                    selectedOption={npu.model_900p ?? ""}
+                    rgOptions={(npu.models_900p ?? []).map((m) => ({ data: m.file, label: m.label }))}
+                    onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                </PanelSectionRow>
+              )}
               {npu.available && npu.enabled && (npu.models?.length ?? 0) > 0 && (
                 <PanelSectionRow>
                   <DropdownItem
@@ -1375,6 +1386,17 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                           description={t("Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.")}
                           onChange={(v: number) => void changeNpuSharpness(Math.round(v * 10) / 10)} />
                       </PanelSectionRow>
+                      {(npu.models_900p?.length ?? 0) > 0 && (
+                        <PanelSectionRow>
+                          <DropdownItem
+                            onMenuWillOpen={openMenuWithFocus}
+                            label={t("NPU model for 1600×900 (×1.2)")}
+                            description={t("Used automatically when the game runs at 1600×900: near-native 1080p clarity in ~3.5 ms on the NPU.")}
+                            selectedOption={npu.model_900p ?? ""}
+                            rgOptions={(npu.models_900p ?? []).map((m) => ({ data: m.file, label: m.label }))}
+                            onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                        </PanelSectionRow>
+                      )}
                       {(npu.models?.length ?? 0) > 0 && (
                         <PanelSectionRow>
                           <DropdownItem

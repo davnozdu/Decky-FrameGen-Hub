@@ -607,5 +607,7 @@
   "NPU model (720p)": "Модель NPU (720p)",
   "Shared by all NPU games. 900p model is selected automatically.": "Общая для всех NPU-игр. Модель 900p выбирается автоматически.",
   "NPU layer on top (900p / 720p → 1080p + NPU FG)": "Слой NPU поверх (900p / 720p → 1080p + NPU FG)",
-  "Combine FSR 4 Lite / OptiScaler (internal temporal upscale to 900p or 720p) with Ryzen AI NPU upscaling to 1080p and NPU Frame Generation. Keep in-game/OptiScaler frame generation Off.": "Совмещает FSR 4 Lite / OptiScaler (внутренний темпоральный апскейл до 900p или 720p) с NPU-апскейлом до 1080p и генератором кадров NPU. Генерацию кадров в игре/OptiScaler держите выключенной."
+  "Combine FSR 4 Lite / OptiScaler (internal temporal upscale to 900p or 720p) with Ryzen AI NPU upscaling to 1080p and NPU Frame Generation. Keep in-game/OptiScaler frame generation Off.": "Совмещает FSR 4 Lite / OptiScaler (внутренний темпоральный апскейл до 900p или 720p) с NPU-апскейлом до 1080p и генератором кадров NPU. Генерацию кадров в игре/OptiScaler держите выключенной.",
+  "NPU model for 1600×900 (×1.2)": "Модель NPU для 1600×900 (×1.2)",
+  "Used automatically when the game runs at 1600×900: near-native 1080p clarity in ~3.5 ms on the NPU.": "Включается сама при разрешении 1600×900: чёткость почти как в нативном 1080p всего за ~3.5 мс на NPU."
 }
