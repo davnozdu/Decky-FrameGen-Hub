@@ -141,7 +141,7 @@ class NpuSrMixin:
             catalog = {}
         models = []
         for path in sorted(folder.glob("*.onnx")):
-            if "flow" in path.name.lower():
+            if "flow" in path.name.lower() or "180x320x25" in path.name or "900p" in path.name.lower():
                 continue
             if self._npusr_is_x2(path.name) != x2:
                 continue
@@ -190,7 +190,8 @@ class NpuSrMixin:
             pass  # alive, owned by another user
         except OSError:
             return None
-        keys = ("in", "out", "frames", "npu_frames", "fallback_frames", "npu_ms", "connected")
+        keys = ("in", "out", "frames", "npu_frames", "fallback_frames", "npu_ms", "connected",
+                "fg_mult", "fg_active", "fg_engine", "fg_frames", "fg_flow_ms", "fg_free_fps", "fg_step_ms")
         return {k: stats.get(k) for k in keys}
 
     def _npusr_user_manifest(self) -> Path:

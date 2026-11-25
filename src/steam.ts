@@ -36,6 +36,41 @@ export const setLaunchOptions = (appId: number, options: string): void => {
   }
 };
 
+export const getResolutionOverride = (appId: number): Promise<string> =>
+  new Promise((resolve) => {
+    if (typeof SteamClient === "undefined" || !SteamClient?.Apps?.RegisterForAppDetails) {
+      resolve("");
+      return;
+    }
+    let settled = false;
+    let unregister = () => {};
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      unregister();
+      resolve("");
+    }, 3000);
+    const registration = SteamClient.Apps.RegisterForAppDetails(
+      appId,
+      (details: { strDisplayResolutionOverride?: string }) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        window.setTimeout(() => unregister(), 0);
+        resolve(details?.strDisplayResolutionOverride ?? "");
+      }
+    );
+    unregister = () => registration?.unregister?.();
+  });
+
+export const setResolutionOverride = (appId: number, res: string): boolean => {
+  if (typeof SteamClient !== "undefined" && SteamClient?.Apps?.SetAppResolutionOverride) {
+    SteamClient.Apps.SetAppResolutionOverride(appId, res);
+    return true;
+  }
+  return false;
+};
+
 // Clipboard in Game Mode: execCommand on a hidden input works where navigator.clipboard often does not.
 export const copyText = async (text: string): Promise<boolean> => {
   const input = document.createElement("input");

@@ -52,7 +52,8 @@ export type GameStatus = Result & {
 };
 
 export type NpuSrLive = { in?: string; out?: string; frames?: number; npu_frames?: number; fallback_frames?: number;
-  npu_ms?: number; connected?: boolean };
+  npu_ms?: number; connected?: boolean; fg_mult?: number; fg_active?: number; fg_engine?: string;
+  fg_frames?: number; fg_flow_ms?: number; fg_free_fps?: number; fg_step_ms?: number };
 export type NpuSrModel = { file: string; label: string; note?: string };
 export type NpuSrStatus = Result & { available?: boolean; missing?: string[]; enabled?: boolean; service?: string;
   model?: string | null; models?: NpuSrModel[]; model_x2?: string | null; models_x2?: NpuSrModel[]; sharpness?: number; aa?: number; fg?: number; fg_engine?: string; live?: NpuSrLive | null;

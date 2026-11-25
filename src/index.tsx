@@ -83,7 +83,7 @@ import {
 } from "./api";
 import { registerFocusRoot, withSettingFocus, openMenuWithFocus } from "./focus";
 import { t, translateMessage, initializeLanguage, subscribeLanguage, getLanguage } from "./i18n";
-import { copyText, getLaunchOptions, setLaunchOptions, getNonSteamShortcuts } from "./steam";
+import { copyText, getLaunchOptions, setLaunchOptions, getNonSteamShortcuts, getResolutionOverride, setResolutionOverride } from "./steam";
 
 declare const SteamClient: any;
 
@@ -540,8 +540,12 @@ function GameSection({ info }: { info: AnrInfo | null }) {
   });
 
   const [npu, setNpu] = useState<NpuSrStatus | null>(null);
+  const [resOverride, setResOverride] = useState<string>("");
   const loadNpu = useCallback(async (id: string) => {
-    if (!id) return setNpu(null);
+    if (!id) { setResOverride(""); return setNpu(null); }
+    void getResolutionOverride(Number(id)).then((res) => {
+      if (selectedApp.current === id) setResOverride(res || "");
+    });
     try {
       const r = await getNpuSr(id);
       if (selectedApp.current === id) setNpu(r.status === "success" ? r : null);
@@ -588,6 +592,26 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const r = await setNpuFgEngine(engine);
     if (r.status !== "success") toast(r.message || r.status);
   });
+  const changeResOverride = withSettingFocus(async (res: string) => {
+    setResOverride(res);
+    const ok = setResolutionOverride(Number(appid), res);
+    if (!ok) {
+      toast(t("Steam resolution override is unavailable in this session; change resolution in Steam Properties or in-game."));
+    } else if (status?.running) {
+      toast(t("Saved for next launch. To switch right now without restarting, change resolution in the game's graphics menu — NPU adapts live."));
+    } else {
+      toast(res ? t("Render resolution set to {0}.", res) : t("Render resolution reset to Default."));
+    }
+  });
+  useEffect(() => {
+    if (!appid || !npu?.enabled || !status?.running) return;
+    const timer = window.setInterval(() => {
+      void getNpuSr(appid).then((r) => {
+        if (selectedApp.current === appid && r.status === "success") setNpu(r);
+      }).catch(() => {});
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [appid, npu?.enabled, status?.running]);
   const changeNpuCapture = withSettingFocus(async (on: boolean) => {
     const r = await setNpuCapture(on);
     toast(r.message || r.status);
@@ -929,7 +953,13 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   return !upscaler?.choice || upscaler.choice === "off" ? t("Game TAA → NPU 1080p") : t("{0} → NPU 1080p", base);
                 })()}</b>
                 <span style={{ opacity: 0.7 }}>{t("Frame generation")}</span>
-                <b style={{ textAlign: "right" }}>{status?.lsfg ? "LSFG" : patched ? generatorLabel : t("Off")}</b>
+                <b style={{ textAlign: "right", color: npu?.enabled && (npu.fg ?? 1) !== 1 ? "#86dca5" : undefined }}>{
+                  status?.lsfg ? "LSFG"
+                  : patched ? generatorLabel
+                  : npu?.enabled && (npu.fg ?? 1) !== 1
+                    ? (npu.fg === 0 ? t("NPU FG · Auto") : `NPU FG · ${npu.fg}×`)
+                  : t("Off")
+                }</b>
                 {npu && <>
                   <span style={{ opacity: 0.7 }}>{t("NPU upscaling")}</span>
                   <b style={{ textAlign: "right", color: npu.enabled ? "#86dca5" : undefined }}>
@@ -954,14 +984,53 @@ function GameSection({ info }: { info: AnrInfo | null }) {
           {npu && !patched && (
             <>
               <PanelSectionRow>
-                <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU 720p → 1080p (Ryzen AI)")}</div>
+                <div style={{ ...small, opacity: 1, fontWeight: 700, marginTop: "6px" }}>{t("NPU upscaling & frame generation (Ryzen AI)")}</div>
               </PanelSectionRow>
-              {!patched && <PanelSectionRow>
+              {npu.enabled && (
+                <PanelSectionRow>
+                  {(() => {
+                    const live = npu.live;
+                    const npuOn = Boolean(live?.connected && (live.npu_frames ?? 0) > 0);
+                    const fgActive = (live?.fg_active ?? 1) > 1;
+                    const fgWant = (npu.fg ?? 1) !== 1;
+                    const baseFps = live?.fg_free_fps ?? 0;
+                    const outFps = fgActive && baseFps > 0 ? Math.round(baseFps * (live?.fg_active ?? 1)) : 0;
+                    const engLabel = (live?.fg_engine || npu.fg_engine || "npu") === "npu" ? "NPU FlowNet" : "CPU";
+                    const boxStyle: React.CSSProperties = {
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      background: npuOn ? "rgba(134,220,165,0.12)" : "rgba(255,216,102,0.10)",
+                      border: `1px solid ${npuOn ? "rgba(134,220,165,0.35)" : "rgba(255,216,102,0.30)"}`,
+                      fontSize: "12px",
+                      lineHeight: "17px",
+                    };
+                    return (
+                      <div style={boxStyle}>
+                        <div style={{ fontWeight: 700, color: npuOn ? "#86dca5" : "#ffd866" }}>
+                          {npuOn
+                            ? t("● NPU active: {0} → {1} ({2} ms)", live?.in ?? "?", live?.out ?? "?", (live?.npu_ms ?? 0).toFixed(1))
+                            : status?.running
+                              ? t("● Waiting for 900p / 720p / 576p frame")
+                              : t("○ NPU ready ({0})", npu.service ?? "?")}
+                        </div>
+                        <div style={{ marginTop: "2px", color: fgActive ? "#86dca5" : fgWant ? "#ffd866" : "rgba(255,255,255,0.75)" }}>
+                          {fgActive
+                            ? t("● Frame Gen {0}× ({1}): ~{2} FPS · flow {3} ms", String(live?.fg_active ?? 2), engLabel, String(outFps || "?"), (live?.fg_flow_ms ?? 0).toFixed(1))
+                            : fgWant
+                              ? (npuOn ? t("◐ Frame Gen standby ({0})", npu.fg === 0 ? t("Auto") : `${npu.fg}×`) : t("○ Frame Gen armed ({0} · {1})", npu.fg === 0 ? t("Auto") : `${npu.fg}×`, engLabel))
+                              : t("○ Frame Gen off (1×)")}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </PanelSectionRow>
+              )}
+              <PanelSectionRow>
                 <DropdownItem
                   onMenuWillOpen={openMenuWithFocus}
                   label={t("Upscaler")}
                   description={npu.enabled
-                    ? t("Set the game to 1280×720. The NPU upscales to 1080p while the GPU renders the game. Turning it on removes OptiScaler and frame generation from the game; add Lossless Scaling yourself if you want it. Applies on the next game start.")
+                    ? t("Supports 1600×900, 1280×720, and 1024×576 → 1080p on the Ryzen AI NPU with built-in AA and Async Frame Generation. Keeps game files clean.")
                     : npu.available
                     ? t("FSR 4 and FSR 4 Lite install OptiScaler into the game automatically. NPU and Off keep the game clean.")
                     : t("Not installed on this device: {0}. Import the NPU package in Tools → Libraries and updates.", (npu.missing ?? []).map((m) => t(m)).join(", "))}
@@ -969,52 +1038,27 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   disabled={busy !== null || Boolean(status?.running) || status?.installed === false}
                   rgOptions={[
                     { data: "off", label: t("Off (game's own)") },
-                    ...(npu.available ? [{ data: "npu", label: t("NPU 720p → 1080p (Ryzen AI)") }] : []),
+                    ...(npu.available ? [{ data: "npu", label: t("NPU (900p / 720p / 576p → 1080p)") }] : []),
                     { data: "fsr4", label: t("FSR 4 · installs OptiScaler") },
                     { data: "fsr4lite", label: t("FSR 4 Lite · installs OptiScaler") },
                   ]}
                   onChange={(o: { data: string }) => void changeCleanChoice("upscaler", String(o.data))} />
-              </PanelSectionRow>}
-              {patched && !npu.enabled && (
-                <PanelSectionRow><div style={small}>{npu.available
-                  ? t("Choose \"NPU 720p → 1080p\" in Upscaler below.")
-                  : t("Not installed on this device: {0}. Import the NPU package in Tools → Libraries and updates.", (npu.missing ?? []).map((m) => t(m)).join(", "))}</div></PanelSectionRow>
-              )}
-              {npu.available && npu.enabled && (npu.models?.length ?? 0) > 0 && (
-                <PanelSectionRow>
-                  <DropdownItem
-                    onMenuWillOpen={openMenuWithFocus}
-                    label={t("NPU model")}
-                    description={npu.models?.find((m) => m.file === npu.model)?.note || t("Shared by all NPU games. A running game switches in a few seconds.")}
-                    selectedOption={npu.model ?? ""}
-                    rgOptions={(npu.models ?? []).map((m) => ({ data: m.file, label: m.label }))}
-                    onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
-                </PanelSectionRow>
-              )}
-              {npu.available && npu.enabled && (npu.models_x2?.length ?? 0) > 0 && (
-                <PanelSectionRow>
-                  <DropdownItem
-                    onMenuWillOpen={openMenuWithFocus}
-                    label={t("NPU model for 1024×576 (×2)")}
-                    description={t("Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.")}
-                    selectedOption={npu.model_x2 ?? ""}
-                    rgOptions={(npu.models_x2 ?? []).map((m) => ({ data: m.file, label: m.label }))}
-                    onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
-                </PanelSectionRow>
-              )}
+              </PanelSectionRow>
               {npu.available && npu.enabled && (
                 <>
                   <PanelSectionRow>
-                    <SliderField label={t("NPU sharpness")} value={npu.sharpness ?? 0} min={0} max={1} step={0.1}
-                      showValue notchCount={11} notchTicksVisible={false}
-                      description={t("Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.")}
-                      onChange={(v: number) => void changeNpuSharpness(Math.round(v * 10) / 10)} />
-                  </PanelSectionRow>
-                  <PanelSectionRow>
-                    <SliderField label={t("NPU anti-aliasing")} value={npu.aa ?? 0.5} min={0} max={1} step={0.1}
-                      showValue notchCount={11} notchTicksVisible={false}
-                      description={t("Directional edge smoothing (removes stair-steps on diagonal edges without blurring textures). 0 = off. Applies within a second.")}
-                      onChange={(v: number) => void changeNpuAa(Math.round(v * 10) / 10)} />
+                    <DropdownItem
+                      onMenuWillOpen={openMenuWithFocus}
+                      label={t("Render resolution (Steam)")}
+                      description={t("Sets Steam's Game Resolution for this game (applies on next launch). To switch live without restarting, change resolution in the game's graphics menu — NPU adapts automatically.")}
+                      selectedOption={["", "1600x900", "1280x720", "1024x576"].includes(resOverride) ? resOverride : ""}
+                      rgOptions={[
+                        { data: "", label: t("Default (game decides)") },
+                        { data: "1600x900", label: t("1600×900 · Quality (×1.2)") },
+                        { data: "1280x720", label: t("1280×720 · Balanced (×1.5)") },
+                        { data: "1024x576", label: t("1024×576 · Performance (×2)") },
+                      ]}
+                      onChange={(o: { data: string }) => void changeResOverride(String(o.data))} />
                   </PanelSectionRow>
                   <PanelSectionRow>
                     <SliderField label={t("NPU Frame Generation")}
@@ -1046,7 +1090,41 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                         onChange={(o: { data: string }) => void changeNpuFgEngine(String(o.data))} />
                     </PanelSectionRow>
                   )}
+                  <PanelSectionRow>
+                    <SliderField label={t("NPU anti-aliasing")} value={npu.aa ?? 0.5} min={0} max={1} step={0.1}
+                      showValue notchCount={11} notchTicksVisible={false}
+                      description={t("Directional edge smoothing (removes stair-steps on diagonal edges without blurring textures). 0 = off. Applies within a second.")}
+                      onChange={(v: number) => void changeNpuAa(Math.round(v * 10) / 10)} />
+                  </PanelSectionRow>
+                  <PanelSectionRow>
+                    <SliderField label={t("NPU sharpness")} value={npu.sharpness ?? 0} min={0} max={1} step={0.1}
+                      showValue notchCount={11} notchTicksVisible={false}
+                      description={t("Extra edge and texture detail after the NPU, without halos. 0 = off. Applies to a running game within a second.")}
+                      onChange={(v: number) => void changeNpuSharpness(Math.round(v * 10) / 10)} />
+                  </PanelSectionRow>
                 </>
+              )}
+              {npu.available && npu.enabled && (npu.models?.length ?? 0) > 0 && (
+                <PanelSectionRow>
+                  <DropdownItem
+                    onMenuWillOpen={openMenuWithFocus}
+                    label={t("NPU model (720p)")}
+                    description={npu.models?.find((m) => m.file === npu.model)?.note || t("Shared by all NPU games. 900p model is selected automatically.")}
+                    selectedOption={npu.model ?? ""}
+                    rgOptions={(npu.models ?? []).map((m) => ({ data: m.file, label: m.label }))}
+                    onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                </PanelSectionRow>
+              )}
+              {npu.available && npu.enabled && (npu.models_x2?.length ?? 0) > 0 && (
+                <PanelSectionRow>
+                  <DropdownItem
+                    onMenuWillOpen={openMenuWithFocus}
+                    label={t("NPU model for 1024×576 (×2)")}
+                    description={t("Used automatically when the game runs at 1024×576 (Steam game resolution): the GPU renders 36% fewer pixels than at 720p, the NPU doubles it.")}
+                    selectedOption={npu.model_x2 ?? ""}
+                    rgOptions={(npu.models_x2 ?? []).map((m) => ({ data: m.file, label: m.label }))}
+                    onChange={(o: { data: string }) => void changeNpuModel(o.data)} />
+                </PanelSectionRow>
               )}
               {npuLine && <PanelSectionRow><div style={small}>{npuLine}</div></PanelSectionRow>}
             </>
