@@ -741,10 +741,10 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     return parts.filter(Boolean).join(" ");
   };
 
-  // One-click FSR 4.1.2 Lite setup (optionally combined with NPU-SR + NPU FrameGen on top):
+  // One-click FSR 4.1.2 Lite setup (optionally combined with NPU-SR or native 1080p NPU FG-only):
   // patches OptiScaler if needed, turns OptiScaler FG off, switches core to 0.10 Nightly, activates FSR 4 Lite,
-  // and enables/disables the NPU layer cleanly without forcing the user through 3 hidden menus.
-  const enableFsr4Lite = async (withNpu: boolean): Promise<string> => {
+  // enables/disables the NPU layer, ensures NPU FG is on when requested, and sets Steam render resolution.
+  const enableFsr4Lite = async (withNpu: boolean, targetRes?: string): Promise<string> => {
     const parts: string[] = [];
     if (!patched) {
       const current = await getLaunchOptions(Number(appid));
@@ -767,7 +767,18 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     const n = await setNpuSr(appid, withNpu, curAfterUp);
     if (n.status !== "success") throw new Error(n.message || t("Failed."));
     if (n.launch_options !== undefined) setLaunchOptions(Number(appid), n.launch_options);
-    if (withNpu) parts.push(t("NPU layer enabled on top (900p / 720p → 1080p + NPU FG)."));
+    if (withNpu) {
+      if ((npu?.fg ?? 1) === 1) await setNpuFg(0);  // Auto FG
+      if (targetRes) {
+        setResOverride(targetRes);
+        setResolutionOverride(Number(appid), targetRes);
+      }
+      if (targetRes === "1920x1080") {
+        parts.push(t("Native 1080p UI + NPU FrameGen only enabled (no NPU UI scaling)."));
+      } else {
+        parts.push(t("NPU layer enabled on top (900p / 720p → 1080p + NPU FG)."));
+      }
+    }
     return parts.filter(Boolean).join(" ");
   };
 
@@ -777,7 +788,8 @@ function GameSection({ info }: { info: AnrInfo | null }) {
     setBusy("patch");
     try {
       if (kind === "upscaler" && choice === "npu") toast(await enableNpuClean());
-      else if (kind === "upscaler" && choice === "fsr4lite_npu") toast(await enableFsr4Lite(true));
+      else if (kind === "upscaler" && choice === "fsr4lite_fg1080") toast(await enableFsr4Lite(true, "1920x1080"));
+      else if (kind === "upscaler" && choice === "fsr4lite_npu") toast(await enableFsr4Lite(true, resOverride === "1920x1080" || !resOverride ? "1600x900" : undefined));
       else if (kind === "upscaler" && choice === "fsr4lite") toast(await enableFsr4Lite(false));
       else if (kind === "upscaler" && choice === "off") {
         if (npu?.enabled) {
@@ -814,9 +826,14 @@ function GameSection({ info }: { info: AnrInfo | null }) {
       await loadNpu(appid);
       return;
     }
-    if (choice === "fsr4lite_npu" || choice === "fsr4lite") {
+    if (choice === "fsr4lite_fg1080" || choice === "fsr4lite_npu" || choice === "fsr4lite") {
       setBusy("patch");
-      try { toast(await enableFsr4Lite(choice === "fsr4lite_npu")); } catch (e) { toast(errorText(e)); }
+      try {
+        const targetRes = choice === "fsr4lite_fg1080" ? "1920x1080"
+          : choice === "fsr4lite_npu" && (resOverride === "1920x1080" || !resOverride) ? "1600x900"
+          : undefined;
+        toast(await enableFsr4Lite(choice !== "fsr4lite", targetRes));
+      } catch (e) { toast(errorText(e)); }
       finally { setBusy(null); }
       await loadStatus(appid, true);
       await loadGames();
@@ -1056,9 +1073,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                       <div style={boxStyle}>
                         <div style={{ fontWeight: 700, color: npuOn ? "#86dca5" : "#ffd866" }}>
                           {npuOn
-                            ? t("● NPU active: {0} → {1} ({2} ms)", live?.in ?? "?", live?.out ?? "?", (live?.npu_ms ?? 0).toFixed(1))
+                            ? (live?.in && live?.in === live?.out
+                                ? t("● Native {0} (NPU FG-only · no UI scale)", live.in)
+                                : t("● NPU active: {0} → {1} ({2} ms)", live?.in ?? "?", live?.out ?? "?", (live?.npu_ms ?? 0).toFixed(1)))
                             : status?.running
-                              ? t("● Waiting for 900p / 720p / 576p frame")
+                              ? t("● Waiting for 1080p / 900p / 720p / 576p frame")
                               : t("○ NPU ready ({0})", npu.service ?? "?")}
                         </div>
                         <div style={{ marginTop: "2px", color: fgActive ? "#86dca5" : fgWant ? "#ffd866" : "rgba(255,255,255,0.75)" }}>
@@ -1086,8 +1105,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                   disabled={busy !== null || Boolean(status?.running) || status?.installed === false}
                   rgOptions={[
                     { data: "off", label: t("Off (game's own)") },
+                    ...(npu.available ? [{ data: "fsr4lite_fg1080", label: t("FSR 4 Lite (1080p) + NPU FG (1-click)") }] : []),
+                    ...(npu.available ? [{ data: "fsr4lite_npu", label: t("FSR 4 Lite + NPU 900p→1080p (1-click)") }] : []),
                     ...(npu.available ? [{ data: "npu", label: t("NPU (900p / 720p / 576p → 1080p)") }] : []),
-                    ...(npu.available ? [{ data: "fsr4lite_npu", label: t("FSR 4 Lite + NPU (1-click tandem)") }] : []),
                     { data: "fsr4lite", label: t("FSR 4 Lite · installs OptiScaler") },
                     { data: "fsr4", label: t("FSR 4 · installs OptiScaler") },
                   ]}
@@ -1100,9 +1120,10 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                       onMenuWillOpen={openMenuWithFocus}
                       label={t("Render resolution (Steam)")}
                       description={t("Sets Steam's Game Resolution for this game (applies on next launch). To switch live without restarting, change resolution in the game's graphics menu — NPU adapts automatically.")}
-                      selectedOption={["", "1600x900", "1280x720", "1024x576"].includes(resOverride) ? resOverride : ""}
+                      selectedOption={["", "1920x1080", "1600x900", "1280x720", "1024x576"].includes(resOverride) ? resOverride : ""}
                       rgOptions={[
                         { data: "", label: t("Default (game decides)") },
+                        { data: "1920x1080", label: t("1920×1080 · Native UI + NPU FG only") },
                         { data: "1600x900", label: t("1600×900 · Quality (×1.2)") },
                         { data: "1280x720", label: t("1280×720 · Balanced (×1.5)") },
                         { data: "1024x576", label: t("1024×576 · Performance (×2)") },
@@ -1305,7 +1326,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                           : t("OptiScaler's upscaler. The game's DLSS option drives it.")
                       }
                       selectedOption={npu?.enabled
-                        ? (upscaler.choice === "fsr4lite" ? "fsr4lite_npu" : (!upscaler.choice || upscaler.choice === "off" ? "npu" : upscaler.choice))
+                        ? (upscaler.choice === "fsr4lite"
+                            ? (resOverride === "1920x1080" ? "fsr4lite_fg1080" : "fsr4lite_npu")
+                            : (!upscaler.choice || upscaler.choice === "off" ? "npu" : upscaler.choice))
                         : (upscaler.choice || "package")}
                       rgOptions={(() => {
                         const list = upscaler.options.map((o) => ({
@@ -1318,8 +1341,9 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                         }));
                         if (!npu?.available) return list;
                         return [
+                          { data: "fsr4lite_fg1080", label: t("FSR 4 Lite (1080p) + NPU FG (1-click)") },
+                          { data: "fsr4lite_npu", label: t("FSR 4 Lite + NPU 900p→1080p (1-click)") },
                           { data: "npu", label: t("NPU (900p / 720p / 576p → 1080p)") },
-                          { data: "fsr4lite_npu", label: t("FSR 4 Lite + NPU (1-click tandem)") },
                           ...list,
                         ];
                       })()}
@@ -1360,9 +1384,11 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                             <div style={boxStyle}>
                               <div style={{ fontWeight: 700, color: npuOn ? "#86dca5" : "#ffd866" }}>
                                 {npuOn
-                                  ? t("● NPU active: {0} → {1} ({2} ms)", live?.in ?? "?", live?.out ?? "?", (live?.npu_ms ?? 0).toFixed(1))
+                                  ? (live?.in && live?.in === live?.out
+                                      ? t("● Native {0} (NPU FG-only · no UI scale)", live.in)
+                                      : t("● NPU active: {0} → {1} ({2} ms)", live?.in ?? "?", live?.out ?? "?", (live?.npu_ms ?? 0).toFixed(1)))
                                   : status?.running
-                                    ? t("● Waiting for 900p / 720p / 576p frame")
+                                    ? t("● Waiting for 1080p / 900p / 720p / 576p frame")
                                     : t("○ NPU ready ({0})", npu.service ?? "?")}
                               </div>
                               <div style={{ marginTop: "2px", color: fgActive ? "#86dca5" : fgWant ? "#ffd866" : "rgba(255,255,255,0.75)" }}>
@@ -1381,9 +1407,10 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                           onMenuWillOpen={openMenuWithFocus}
                           label={t("Render resolution (Steam)")}
                           description={t("Sets Steam's Game Resolution for this game (applies on next launch). To switch live without restarting, change resolution in the game's graphics menu — NPU adapts automatically.")}
-                          selectedOption={["", "1600x900", "1280x720", "1024x576"].includes(resOverride) ? resOverride : ""}
+                          selectedOption={["", "1920x1080", "1600x900", "1280x720", "1024x576"].includes(resOverride) ? resOverride : ""}
                           rgOptions={[
                             { data: "", label: t("Default (game decides)") },
+                            { data: "1920x1080", label: t("1920×1080 · Native UI + NPU FG only") },
                             { data: "1600x900", label: t("1600×900 · Quality (×1.2)") },
                             { data: "1280x720", label: t("1280×720 · Balanced (×1.5)") },
                             { data: "1024x576", label: t("1024×576 · Performance (×2)") },

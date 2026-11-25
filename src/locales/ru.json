@@ -612,5 +612,11 @@
   "Used automatically when the game runs at 1600×900: near-native 1080p clarity in ~3.5 ms on the NPU.": "Включается сама при разрешении 1600×900: чёткость почти как в нативном 1080p всего за ~3.5 мс на NPU.",
   "FSR 4 Lite enabled.": "FSR 4 Lite включён.",
   "NPU layer enabled on top (900p / 720p → 1080p + NPU FG).": "Слой NPU включён поверх (900p / 720p → 1080p + NPU FG).",
+  "Native 1080p UI + NPU FrameGen only enabled (no NPU UI scaling).": "Включён нативный 1080p интерфейс + только NPU-генератор кадров (без масштабирования UI).",
+  "FSR 4 Lite (1080p) + NPU FG (1-click)": "FSR 4 Lite (1080p) + NPU FG (в 1 клик)",
+  "FSR 4 Lite + NPU 900p→1080p (1-click)": "FSR 4 Lite + NPU 900p→1080p (в 1 клик)",
+  "1920×1080 · Native UI + NPU FG only": "1920×1080 · Нативный UI + только NPU FG",
+  "● Native {0} (NPU FG-only · no UI scale)": "● Нативный {0} (только NPU FG · без масштаба UI)",
+  "● Waiting for 1080p / 900p / 720p / 576p frame": "● Ожидание кадра 1080p / 900p / 720p / 576p",
   "FSR 4 Lite + NPU (1-click tandem)": "FSR 4 Lite + NPU (всё в 1 клик)"
 }
