@@ -1231,7 +1231,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                       label={t("Upscaler")}
                       description={
                         npu?.enabled && (!upscaler.choice || upscaler.choice === "off")
-                          ? t("The game renders 1280×720 with its own TAA; the Ryzen AI NPU upscales to 1080p without using the GPU. Turn DLSS/FSR off in the game.")
+                          ? t("The game renders at 1600×900, 1280×720, or 1024×576 with its own TAA; the Ryzen AI NPU upscales to 1080p without using the GPU. Turn DLSS/FSR off in the game.")
                           : upscaler.signed_sdk && ["fsr4", "fsr4lite"].includes(upscaler.choice || "")
                           ? t("Official FSR 4 SDK with signed OptiScaler. DLSS in the game is the input; FSR 4 is the output. INT8 is enabled for this GPU when needed.")
                           : upscaler.choice === "fsr4lite"
@@ -1257,7 +1257,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
                             : o.label,
                         }));
                         if (!npu?.available) return list;
-                        return [{ data: "npu", label: t("NPU 720p → 1080p (Ryzen AI)") }, ...list];
+                        return [{ data: "npu", label: t("NPU (900p / 720p / 576p → 1080p)") }, ...list];
                       })()}
                       onChange={(o) => void changeUpscalerChoice(String(o.data), Boolean(upscaler.watermark))}
                     />
@@ -1420,7 +1420,7 @@ function GameSection({ info }: { info: AnrInfo | null }) {
               <div style={{ ...small, opacity: 1, padding: "10px 12px", borderRadius: "8px", background: "rgba(255,255,255,0.045)" }}>
                 <b>{t("What to set in the game")}</b><br />
                 {npu?.enabled && (!upscaler?.choice || upscaler.choice === "off") && <>
-                  {t("NPU: game resolution 1280×720 (if the game keeps 1920×1080, set Steam → game Properties → Game resolution 1280×720). DLSS/FSR off, TAA on.")}<br /></>}
+                  {t("NPU: set game resolution to 1600×900, 1280×720, or 1024×576 (via Render resolution above or in-game settings). DLSS/FSR off, TAA on.")}<br /></>}
                 {genChoice === "lsfg"
                   ? t("LSFG: turn off the game's own frame generation.")
                   : genChoice === "off"
@@ -1919,7 +1919,7 @@ function HelpSection() {
       <PanelSectionRow>
         <div style={small}>
           {" "}{t("1. Choose a game above and press Install Hub: the plugin copies its files and sets the launch options.")}{" "}<br />
-          {" "}{t("2. 1 · Image quality: pick an upscaler (FSR 4 / FSR 4 Lite / NPU 720p → 1080p) or Off.")}{" "}<br />
+          {" "}{t("2. 1 · Image quality: pick an upscaler (FSR 4 / FSR 4 Lite / NPU 900p/720p/576p → 1080p) or Off.")}{" "}<br />
           {" "}{t("3. 2 · Smoothness: pick a frame generator. Lossless Scaling works in any game; ANR FG and XeFG replace DLSS Frame Generation, so turn that on in the game.")}{" "}<br />
           {" "}{t("4. Follow \"What to set in the game\" in the game card, start the game, turn in-game V-Sync off.")}{" "}<br />
           {" "}{t("Restore game removes everything the plugin changed. OptiScaler's menu: Insert key.")}{" "}</div>

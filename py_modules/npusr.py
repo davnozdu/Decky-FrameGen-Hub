@@ -684,6 +684,6 @@ class NpuSrMixin:
                 self._ensure_opti_no_caps(appid)
             decky.logger.info(f"[NPU-SR] enabled for {appid}")
             return {"status": "success",
-                    "message": "NPU upscaling enabled. Set the game to 1280×720; it applies on the next game start."}
+                    "message": "NPU upscaling enabled. Set the game to 1600×900, 1280×720, or 1024×576; applies on next launch."}
         decky.logger.info(f"[NPU-SR] disabled for {appid}")
         return {"status": "success", "message": "NPU upscaling disabled. It applies on the next game start."}
